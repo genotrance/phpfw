@@ -1,4 +1,19 @@
 ==================
+Version 0.2 => 0.3
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+error.ini
+- Replace old version
+
+config.ini
+- New key under [login] section
+
+==================
 Version 0.1 => 0.2
 ==================
 phpfw.php

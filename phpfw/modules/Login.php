@@ -15,12 +15,14 @@
  *
  * [login]
  * table = login_table_name	: Name of the table in the database that contains login information
+ * key_field = key_field_name : Name of the field that contains the primary key 
  * user_field = user_field_name	: Name of the field that contains the user name
  * pass_field = password_field_name : Name of the field that contains the password (encrypted using PASSWORD())
  *
  * The defaults are as below:
  * [login]
  * table = user
+ * key_field = user_id
  * user_field = email
  * pass_field = password
  */
@@ -31,6 +33,13 @@ class Login extends Module {
 	 * Default: 'user'
 	 */
 	var $table;
+
+	/**
+	 * @var string $table Name of the field that contains the primary key
+	 *
+	 * Default: 'user_id'
+	 */
+	var $key_field;
 
 	/**
 	 * @var string $table Name of the field that contains the user name
@@ -59,6 +68,7 @@ class Login extends Module {
 			"Current password incorrect. Please try again.", "ERROR");
 		$this->register_error('ERROR_LOGIN_NEW_PASSWORD_TOO_SHORT', 
 			"Your new password is too short. At least 8 characters are required. Please try again.", "ERROR");
+		$this->disable_template_library();
 	}
 	
 	/**
@@ -67,6 +77,7 @@ class Login extends Module {
 	function get_configuration() {
 		// Default initialize
 		$this->table = 'user';
+		$this->key_field = 'user_id';
 		$this->user_field = 'email';
 		$this->pass_field = 'password';
 
@@ -74,10 +85,12 @@ class Login extends Module {
 		if (isset($this->application->config['login'])) {
 			if (isset_and_non_empty($this->application->config['login']['table']))
 				$this->table = $this->application->config['login']['table'];
+			if (isset_and_non_empty($this->application->config['login']['key_field']))
+				$this->key_field = $this->application->config['login']['key_field'];
 			if (isset_and_non_empty($this->application->config['login']['user_field']))
-				$this->table = $this->application->config['login']['user_field'];
+				$this->user_field = $this->application->config['login']['user_field'];
 			if (isset_and_non_empty($this->application->config['login']['pass_field']))
-				$this->table = $this->application->config['login']['pass_field'];
+				$this->pass_field = $this->application->config['login']['pass_field'];
 		}
 	}
 	
@@ -112,6 +125,7 @@ class Login extends Module {
 			$row = $rows[0];
 		
 			// Save some of the values in the PHP session
+			$_SESSION['session_user_id'] = $row[$this->key_field];
 			$_SESSION['session_user'] = $_POST[$this->user_field];
 			$_SESSION['session_authenticated'] = 1;
 
@@ -123,7 +137,7 @@ class Login extends Module {
 			return false;
 		}
 	
-		return false;        
+		return false;
 	}
  
 	/**

@@ -1,3 +1,114 @@
+**********************
+ Released version 0.3
+**********************
+
+============================
+Wed May 24 16:11:17 CDT 2006
+============================
+
+Enhancements
+------------
+- Added Form::add_link() by which one can specify which link tables to
+  populate when a form is processed. This way, two tables can be linked
+  without having to create a form containing both the table fields. This can
+  be achieved by adding the table to be populated to the form using 
+  Form::add_table() and then associating an existing row in a second table to
+  the form using Form::add_link()
+- Added an internal method Form::check_duplicate_table() which verifies that
+  the same table is not added more than once, either using Form::add_table()
+  or Form::add_link()
+- Modified Table::get_table_rows_with_actions() to accept additional parameters
+  to be passed into the view, update and delete links.
+- Added Table::get_table_row_links_with_actions() to get all the link rows
+  for a specific link table and return an array with the action links.
+- Added an internal method Table::process_sql_options() to take an existing
+  SQL option and adding a where clause to it.
+- Phpfw now supports the 'time' field type. Currently, it allows the entry of
+  five characters - hh:mm.
+
+Bug Fixes
+---------
+- Fixed a bug in Database::check_schema() where link tables were not being
+  processed correctly.
+
+============================
+Wed May 24 09:41:42 CDT 2006
+============================
+
+Enhancements
+------------
+- Added Login::$key_field to the customize the primary key field used in the 
+  Login module. Key for the current logged in user is saved in the $_SESSION
+  variable as 'session_user_id'. This allows for storing and identifying data
+  that belongs to a specific user.
+- If a data table has a field named as the primary key of the Login table then 
+  phpfw maintains the field internally when the following conditions are met: 
+  the Login module is in use, the user is logged in. The added bonus is that
+  Table::get* methods will filter the information by the current user ID. This
+  way, data can be associated with specific users.
+  
+Bug Fixes
+---------
+- The Login module was not loading the custom table fields correctly from the
+  configuration file. This has been fixed.
+
+============================
+Wed Apr  5 09:30:10 CDT 2006
+============================
+
+Enhancements
+------------
+- Added script/generate.php to generate a module file with basic list, view,
+  add, update and delete functions. This is similar to Rails' 'generate' script
+  that sets up scaffolding.
+- Added CONTACT.txt.
+
+============================
+Mon Apr  3 21:28:40 CDT 2006
+============================
+
+Enhancements
+------------
+- Moved some of the templating library code in Module::render() to 
+  Module::get_templating_library_paths() so that Module::Smarty_render() and
+  Module::PHPTAL_render() can be invoked directly from a module action. These 
+  two functions now expect a template file name as their input and return the 
+  resulting output as a string.
+  
+Bug Fixes
+---------
+- Fixed a bug with the date validation javascript function check_date() which 
+  was causing an infinite loop hang in IE.
+- Fixed a bug with date field support where an mm-dd-yyyy formatted date was
+  being saved to the database which was expecting a yyyy-mm-dd format.
+- Date fields are now validated in PHP as well.
+- Fixed a bug where date fields had a length of -1 hence the input box did not
+  allow typing any values.
+
+============================
+Sat Apr  1 00:42:15 CST 2006
+============================
+
+Enhancements
+------------
+- Added functionality to skip using the templating library if it is enabled
+  in the configuration file. The method Module::disable_template_library() can
+  be invoked in the module's constructor to avoid using the templating library
+  altogether, or in a module action to avoid using it only for that action.
+  Method Module::enable_template_library() can be used in an action where the
+  module disables templating altogether.
+- Added Module::set_template_file() to set the template file to be used by the
+  templating engine if enabled in the configuration file. This allows for a 
+  module action to use a template file other than the default file name of
+  Modulename#action. Usage e.g. When multiple actions share the same template file.
+- Login.php now calls Module::disable_template_library() in it's constructor
+  so that it works when templating is enabled.
+
+  
+**********************
+ Released version 0.2
+**********************
+
 ============================
 Mon Mar 27 23:20:12 CST 2006
 ============================
