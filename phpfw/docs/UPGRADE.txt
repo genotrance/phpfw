@@ -1,4 +1,19 @@
 ==================
+Version 0.3 => 0.4
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+error.ini
+- Replace old version
+
+config.ini
+- New sections [schema], [mailserver], [maildb]
+
+==================
 Version 0.2 => 0.3
 ==================
 phpfw.php

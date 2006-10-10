@@ -30,3 +30,26 @@ function check_date (myDateObj) {
 	else return date_error(myDateObj, 'Invalid date: expected format mm-dd-yyyy');
 }
 function date_error(myDateObj, text) {alert(text);myDateObj.value = '';return false;}
+
+function check_time(myTimeObj) {
+	// Checks time format is hh:mm
+	myTime = myTimeObj.value;
+	
+	if (myTime.length == 5) {
+		if (myTime.substring(2,3) == ':') {
+			var hour = myTime.substring(0,2);
+			var min = myTime.substring(3,5);
+			
+			if (hour > -1 && hour < 24) {
+				if (min > -1 && min < 60) {
+					return true;
+				} else
+					return time_error(myTimeObj, 'Invalid time: expected format hh:mm');
+			} else
+				return time_error(myTimeObj, 'Invalid time: expected format hh:mm');
+		} else
+			return time_error(myTimeObj, 'Invalid time: expected format hh:mm');
+	} else
+		return time_error(myTimeObj, 'Invalid time: expected format hh:mm');
+}
+function time_error(myTimeObj, text) {alert(text);myTimeObj.value = ''; return false;}
