@@ -440,6 +440,25 @@ class Controller {
 	}
 
 	/**
+	 * Encode an ajax query string to be sent to the browser 
+	 *
+	 * Function uses the Controller::encode_url() function to create the query and 
+	 * then makes an AJAX url out of it.
+	 *
+	 * @param string $module Name of the module
+	 * @param string $action Name of the action for this module
+	 * @param string $ajax_element The link will send it's output to this element using AJAX
+	 * @param string $params Parameters required for this module:action combination in "param=value&param=value" format. (default: 0)
+	 *
+	 * @return string A random hash corresponding to this URL - "?url=HASHVALUE" wrapped in an AJAX call
+	 */
+	function encode_ajax_url($module, $action, $ajax_element, $params=0) {
+		$link = $this->encode_url($module, $action, $params);
+		
+		return "javascript:ajax.update('$link', '$ajax_element');";
+	}
+
+	/**
 	 * Decode a query string sent by the browser.
 	 *
 	 * Function looks up the query string hash in the $_SESSION['url_hash'] array and 
@@ -664,6 +683,11 @@ class Form {
 	var $css_class;
 
 	/**
+	 * @var string $ajax_element Form post will be performed using AJAX and the returned output will be added to this element (default: "")
+	 */
+	var $ajax_element;
+	
+	/**
 	 * Constructor for the Form class
 	 *
 	 * Zero initializes members.
@@ -675,6 +699,7 @@ class Form {
 		$this->links = array();
 		$this->link_ids = array();
 		$this->css_class = array();
+		$this->ajax_element = '';
 	}
 
 	/**
@@ -807,6 +832,15 @@ class Form {
 	}
 
 	/**
+	 * AJAXify the form - submit is performed using AJAX and returned data is added to the element specified
+	 *
+	 * @param string $ajax_element The returned output will be added to this element
+	 */
+	function ajaxify($ajax_element) {
+		$this->ajax_element = $ajax_element;
+	}
+
+	/**
 	 * Create the form based on the specified tables and table_ids.
 	 *
 	 * @param string $name Name of the form
@@ -919,6 +953,9 @@ class Form {
 							// If DATE column, call javascript:check_date() to verify mm-dd-yyyy formatting
 							if ($column->type == "D")
 								$properties["onblur"] = "javascript:return check_date(this);";
+							// If TIME column, call javascript:check_time() to verify hh:mm formatting
+							else if ($column->type == "T")
+								$properties["onblur"] = "javascript:return check_time(this);";
 							
 							// Create the input box
 							$view->set_properties($properties);
@@ -1050,10 +1087,13 @@ class Form {
 		
 		// Create the form table
 		$view->set_data($this->data);
-		$view->table_two_column_associative($table, $tr, $td);
+		$view->table_two_column_associative($table, $tr, $td, true);
 		
 		// Create the form action
 		$action = $GLOBALS['__application']->controller->encode_url($module, $action, $params);
+		if ($this->ajax_element != '')
+			$action = "javascript:ajax.submit('$action', '".$this->ajax_element."', $name);";
+			
 		$view->set_properties(array("action" => $action, "method" => "post", "onsubmit" => $onsubmit));
 		$view->form($name);
 		$this->data = $view->get_data();
@@ -1128,7 +1168,7 @@ class Form {
 				// If a DATE field
 				// - Check if a valid date
 				// - Convert to DB date format
-				if ($column->type == "D") {
+				if ($column->type == "D" && $_POST[$column->name] != '') {
 					if ($this->check_date($_POST[$column->name]) == false)
 						$GLOBALS['__application']->error->display_error('ERROR_FORM_INVALID_DATE', 
 							$column->external_name, $_POST[$column->name]);
@@ -1136,10 +1176,18 @@ class Form {
 					$_POST[$column->name] = $this->convert_date($_POST[$column->name], true);
 				}
 				
+				// If a TIME field
+				// - Check if valid time
+				if ($column->type == "T" && $_POST[$column->name] != '')
+					if ($this->check_time($_POST[$column->name]) == false)
+						$GLOBALS['__application']->error->display_error('ERROR_FORM_INVALID_TIME', 
+							$column->external_name, $_POST[$column->name]);
+				
 				// Append the column details for the insert/update query
 				$insert_fields .= $column->name.',';
 				$value = addslashes($_POST[$column->name]);
 				if ($column->type == "I" || $column->type == "N") {
+					if ($value == '') $value = 'NULL';
 					$insert_values .= "$value,";
 					$update .= $column->name."=$value,";
 				} else {
@@ -1255,7 +1303,7 @@ class Form {
 	 * @param string $date_str The input date
 	 * @param bool $year_first If true, convert to yyyy-mm-dd else convert to mm-dd-yyyy
 	 *
-	 * @return Returns the resulting date string
+	 * @return string Returns the resulting date string
 	 */
 	function convert_date($date_str, $year_first=false) {
 		if ($year_first) {
@@ -1282,7 +1330,7 @@ class Form {
 	 *
 	 * @param string $date_str The date string to validate
 	 *
-	 * @return Returns true if valid else false
+	 * @return bool Returns true if valid else false
 	 */
 	function check_date($date_str) {
 		$sep = '-';
@@ -1294,6 +1342,28 @@ class Form {
 
 			if (is_numeric($date) && is_numeric($month) && is_numeric($year) &&
 				$date > 0 && $date < 32 && $month > 0 && $month < 13 && $year > 999)
+				return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check that time entered is hh:mm value
+	 *
+	 * @param string $time_str The time string to validate
+	 *
+	 * @return bool Returns true if valid else false
+	 */
+	function check_time($time_str) {
+		$sep = ':';
+		
+		if (strlen($time_str) == 5 && substr($time_str, 2, 1) == $sep) {
+			$hour = (int) substr($time_str, 0, 2);
+			$min = (int) substr($time_str, 3, 2);
+
+			if (is_numeric($hour) && is_numeric($min) &&
+				$hour > -1 && $hour < 24 && $min > -1 && $min < 60)
 				return true;
 		}
 
@@ -1818,8 +1888,9 @@ class View {
 	 * @param string $tableclass CSS table class to use (default: 0)
 	 * @param string $trclass CSS tr class to use (default: 0)
 	 * @param string $tdclass CSS td class to use (default: 0)
+	 * @param bool $header Set the first row as a header row (default: false)
 	 */
-	function table_two_column_associative($tableclass=0, $trclass=0, $tdclass=0) {
+	function table_two_column_associative($tableclass=0, $trclass=0, $tdclass=0, $header=false) {
 		$tr = '';
 		foreach ($this->data as $key => $value) {
 			$view = new View($key);
@@ -1828,11 +1899,19 @@ class View {
 
 			$td_data = array("#" => $key, "align" => "right", "valign" => "top");
 			if ($tdclass) $td_data['class'] = $tdclass;
-			$td = $this->tag("td", $td_data);
+			if ($header) {
+				$td_data['align'] = "left";
+				$td = $this->tag("th", $td_data);
+			} else $td = $this->tag("td", $td_data);
 
 			$td_data = array("#" => $value);
 			if ($tdclass) $td_data['class'] = $tdclass;
-			$td .= $this->tag("td", $td_data);
+			if ($header) {
+				$td_data['align'] = "left";
+				$td .= $this->tag("th", $td_data);
+			} else $td .= $this->tag("td", $td_data);
+			
+			$header = false;
 			
 			$tr_data = array("#" => $td);
 			if ($trclass) $tr_data['class'] = $trclass;
@@ -2857,11 +2936,12 @@ class Table {
 	 * @param string $update_action Action to execute when update button is clicked(Format: Module:action)
 	 * @param string $del_action Action to execute when delete button is clicked(Format: Module:action)
 	 * @param string $options Specify options to filter or order the results. (default: "")
-	 * @param string $params Parameters required for the view, update and delete module:action combinations in "param=value&param=value" format. (default: 0)
+	 * @param string $params Parameters required for the view, update and delete module:action combinations in "param=value&param=value" format. (default: "")
+	 * @param mixed $ajax_element View, update and delete links will send their output to this element using AJAX if string specified. If array of strings then view[0], update[1], delete[2],  (default: "")
 	 *
 	 * @return array Returns an array of rows where each row is an associative array with column names as the key.
 	 */
-	function get_table_rows_with_actions($view_action=0, $update_action=0, $del_action=0, $options='', $params='') {
+	function get_table_rows_with_actions($view_action=0, $update_action=0, $del_action=0, $options='', $params='', $ajax_element='') {
 		// Get all the table rows
 		$rows = $this->get_table_rows($options);
 
@@ -2895,8 +2975,28 @@ class Table {
 							$params .= "&".$this->primary_key.'='.$rows[$i][$this->primary_key];
 						else
 							$params = $this->primary_key.'='.$rows[$i][$this->primary_key];
-						$view->add_element("a", $key, $properties, $delimit, 
-							$GLOBALS['__application']->controller->encode_url($module, $action, $params));
+						
+						// Create the link and AJAXify if required
+						if (is_array($ajax_element)) {
+							$use_element = '';
+							switch ($key) {
+								case 'view':
+									if (isset($ajax_element[0])) $use_element = $ajax_element[0];
+									break;
+								case 'update':
+									if (isset($ajax_element[1])) $use_element = $ajax_element[1];
+									break;
+								case 'del':
+									if (isset($ajax_element[2])) $use_element = $ajax_element[2];
+									break;
+							}
+						} else $use_element = $ajax_element;
+						
+						if ($use_element != '')
+							$link = $GLOBALS['__application']->controller->encode_ajax_url($module, $action, $use_element, $params);
+						else
+							$link = $GLOBALS['__application']->controller->encode_url($module, $action, $params);
+						$view->add_element("a", $key, $properties, $delimit, $link);
 					}
 				}
 				$view->compile_template();
@@ -2922,10 +3022,11 @@ class Table {
 	 * @param string $del_action Action to execute when delete button is clicked(Format: Module:action)
 	 * @param string $options Specify options to filter or order the results. (default: "")
 	 * @param string $params Parameters required for the view, update and delete module:action combinations in "param=value&param=value" format. (default: 0)
+	 * @param mixed $ajax_element View, update and delete links will send their output to this element using AJAX if string specified. If array of strings then view[0], update[1], delete[2],  (default: "")
 	 *
 	 * @return array Returns an array of rows where each row is an associative array with column names as the key.
 	 */
-	function get_table_row_links_with_actions($table_id, $link_table_name, $view_action=0, $update_action=0, $del_action=0, $options='', $params='') {
+	function get_table_row_links_with_actions($table_id, $link_table_name, $view_action=0, $update_action=0, $del_action=0, $options='', $params='', $ajax_element='') {
 		// Empty rows
 		$row = array();
 		
@@ -2951,7 +3052,7 @@ class Table {
 				$options = $this->process_sql_options($options, $where);
 				
 				// Get the rows with the above ids
-				$rows = $link_tables[$i]->get_table_rows_with_actions($view_action, $update_action, $del_action, $options, $params);
+				$rows = $link_tables[$i]->get_table_rows_with_actions($view_action, $update_action, $del_action, $options, $params, $ajax_element);
 			}
 		
 		return $rows;
@@ -3141,6 +3242,88 @@ class Table {
 	}
 	
 	/**
+	 * Check that this table has the specified number of links with the specified tables
+	 *
+	 * @param int $table_id ID of the row in this table to check links for
+	 * @param mixed $tables String or array of strings of table names
+	 * @param mixed $conditions String/Int or array of string/int specifying the condition - options are 1, 2, 3... for specific, '+' for 1 or more
+	 *
+	 * @return mixed Returns a bool or an array of bools, one for each table specified in the same order
+	 */
+	function check_row_links($table_id, $tables, $conditions) {
+		// Get the link rows for the specified ID
+		$links = $this->get_table_row_links($table_id);
+		$link_tables = $links[0];
+		$link_ids = $links[1];
+
+		// Search for the link table
+		if (is_array($tables) || is_array($conditions)) {
+			if (is_array($conditions) && is_array($conditions)) {
+				// Numbers don't match
+				if (count($tables) != count($conditions))
+					$GLOBALS['__application']->error->display_error('ERROR_TABLE_INCOMPATIBLE_NUMBER_FOR_CHECK_LINKS', 
+						count($tables), count($conditions));
+						
+				// Check all the specified table links
+				$results = array();
+				for ($i = 0; $i < count($tables); $i++) {
+					$table = $tables[$i];
+					$condition = $conditions[$i];
+
+					// Find table in link list
+					$pos = -1;
+					for ($j = 0; $j < count($link_tables); $j++)
+						if ($link_tables[$j]->name == $tables[$i]) {
+							$pos = $j;
+							break;
+						}
+
+					// If table not linked at all, fail test
+					if ($pos == -1) $results[] = false;
+					else $results[] = $this->check_row_link($tables[$i], $conditions[$i], $link_ids[$pos]);
+				}
+			} else
+				// Both are not arrays
+				$GLOBALS['__application']->error->display_error('ERROR_TABLE_CHECK_LINKS_NOT_ARRAYS');
+		} else {
+			// Find table in link list
+			$pos = -1;
+			for ($i = 0; $i < count($link_tables); $i++)
+				if ($link_tables[$i]->name == $tables) {
+					$pos = $i;
+					break;
+				}
+
+			// If table not linked at all, fail test
+			if ($pos == -1) $results = false;
+			else $results = $this->check_row_link($tables, $conditions, $link_ids[$pos]);
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Check that this table has the specified number of links with the specified tables
+	 *
+	 * @param string $table Table name
+	 * @param mixed $conditions String/Int specifying the condition - options are 1, 2, 3... for specific, '+' for 1 or more
+	 * @param string $link_ids One or more colon separated IDs
+	 *
+	 * @return bool Returns a bool for success for failure
+	 */
+	function check_row_link($table, $condition, $link_ids) {
+		$link_ids = explode(':', $link_ids);
+		if (is_int($condition)) {
+			// 1, 2, 3... type of condition
+			if ($condition == count($link_ids)) return true;
+			else return false;
+		} else {
+			// '+' type of condition - one or more
+			if ($condition == '+' && count($link_ids)) return true;
+		}	
+	}
+	
+	/**
 	 * Delete a specific row from this table - for data tables
 	 *
 	 * @param int $table_id Primary key value for the row
@@ -3153,12 +3336,23 @@ class Table {
 	/**
 	 * Delete a specific row from this table - for link tables
 	 *
-	 * @param string $column Name of the column - should be name of a data table
+	 * @param string $column_id Name of the column - should be name of the primary key of a data table
 	 * @param int $value Value of the column - key of this data table
 	 */
-	function delete_link_table_row($column, $value) {
+	function delete_link_table_row($column_id, $value) {
 		$GLOBALS['__application']->database->sql->update_query(
-			'SQL_DELETE', $this->name, "${column}_id=$value", "nocheck");
+			'SQL_DELETE', $this->name, "${column_id}=$value", "nocheck");
+	}
+
+	/**
+	 * Delete all link table entries for the table id mentioned
+	 * 
+	 * @param int Primary key value of row in this table
+	 */
+	function delete_table_row_links($table_id) {
+		foreach ($this->links as $link_table) {
+			$link_table->delete_link_table_row($this->primary_key, $table_id);
+		}
 	}
 	
 	/**
@@ -3193,9 +3387,17 @@ class Table {
 		}
 		
 		// Delete the entries in the linking tables
-		foreach ($this->links as $link_table) {
-			$link_table->delete_link_table_row($this->name, $table_id);
-		}
+		$this->delete_table_row_links($table_id);
+	}
+	
+	/**
+	 * Delete a specific row and all links to other tables
+	 *
+	 * @param int $table_id Primary key value for the row
+	 */
+	function delete_table_row_and_links($table_id) {
+		$this->delete_table_row($table_id);
+		$this->delete_table_row_links($table_id);
 	}
 	
 	/**
@@ -3255,21 +3457,32 @@ class Database {
 	 * Get the schema for this database
 	 *
 	 * @param array $table_names Associative array of table names and requested external name
+	 * @param array $primary_keys Associative array of table names and requested primary keys
 	 */
 	function get_schema($table_names, $primary_keys) {
 		// Get a list of tables
 		$tables = $this->sql->dictionary->MetaTables('TABLES');
 		
+		// If no tables yet then load the schema if available and get the list of tables again
+		if (count($tables) == 0) {
+			$this->load_schema_from_file();
+			$tables = $this->sql->dictionary->MetaTables('TABLES');
+		}
+		
 		// Create table objects for these tables
 		foreach ($tables as $table) {
 			// Check if external name is specified
-			if (is_array($table_names) && isset_and_non_empty($table_names[$table]))
+			if (is_array($table_names) && 
+				isset($table_names[$table]) && 
+				isset_and_non_empty($table_names[$table]))
 				$table_external_name = $table_names[$table];
 			else
 				$table_external_name = '';
 
 			// Check if primary key is specified
-			if (is_array($primary_keys) && isset_and_non_empty($primary_keys[$table]))
+			if (is_array($primary_keys) && 
+				isset($primary_keys[$table]) && 
+				isset_and_non_empty($primary_keys[$table]))
 				$table_primary_key = $primary_keys[$table];
 			else
 				$table_primary_key = '';
@@ -3293,6 +3506,10 @@ class Database {
 	 *   and both the linked tables.
 	 */
 	function check_schema() {
+		// Return if no tables in database
+		if (!is_array($this->tables)) return;
+		
+		// Get the table names
 		$tables = array_keys($this->tables);
 		
 		// Process all potential DATA tables
@@ -3345,6 +3562,73 @@ class Database {
 					$this->tables[$tnames[1]]->links[] =& $this->tables[$table];
 				} else
 					$GLOBALS['__application']->error->display_error('ERROR_DATABASE_INVALID_LINK_TABLE', $table);
+			}
+		}
+	}
+	
+	/**
+	 * Load the schema into the database
+	 *
+	 * This function executes the SQL commands in a file specified in the configuration
+	 * file under the section 'schema'.
+	 *
+	 * Section 'schema' should contain load = true and path = the location of the schema files.
+	 * 
+	 * The SQL file loaded from the above path is constructed based on the database
+	 * type specified under section 'database'.
+	 *
+	 * E.g.
+	 *   For mysql, schema is loaded from - mysql_schema.sql
+	 *   For sqlite, schema is loaded from - sqlite_schema.sql
+	 */
+	function load_schema_from_file() {
+		// Get the configuration
+		$config = &$GLOBALS['__application']->config;
+
+		// Load the schema file if specified in configuration
+		if (isset($config['schema']) && 
+			isset_and_non_empty($config['schema']['load']) && 
+			isset_and_non_empty($config['schema']['path'])) {
+			
+			// Only load if load = true
+			if ($config['schema']['load'] == true) {
+				// Check path exists
+				if (!file_exists($config['schema']['path']))
+					$GLOBALS['__application']->error->display_error('ERROR_DATABASE_MISSING_SCHEMA_PATH', 
+						$config['schema']['path']);
+
+				// Check that file exists
+				$schema_file = $config['schema']['path'].'/'.$config['database']['type'].'_schema.sql';
+				if (!file_exists($schema_file))
+					$GLOBALS['__application']->error->display_error('ERROR_DATABASE_MISSING_SCHEMA_FILE', 
+						$schema_file);
+				
+				// Load schema data from file
+				$lines = file($schema_file);
+				
+				// Filter out comments
+				$commentless = array();
+				foreach ($lines as $line) {
+					// Remove leading and lagging spaces
+					$line = trim($line);
+					if (substr($line, 0, 2) != '--' && $line != '')
+						array_push($commentless, $line);
+				}
+				
+				// Concatenate queries across lines and execute when ready
+				$query = '';
+				foreach ($commentless as $line) {
+					// Append the line to query
+					$query .= $line;
+					
+					// Execute query if complete
+					if (strpos($line, ';') == strlen($line)-1) {
+						if ($this->sql->connection->Execute($query) === false) {
+							print 'error inserting: '.$this->sql->connection->ErrorMsg().'<BR>';
+						}
+						$query = '';
+					}
+				}
 			}
 		}
 	}
@@ -4040,7 +4324,7 @@ class Module {
 	 *
 	 * @param string $template_file The name of the template file to render
 	 *
-	 * @return Returns the output data
+	 * @return string Returns the output data
 	 */
 	function Smarty_render($template_file) {
 		// Get configuration
@@ -4095,7 +4379,7 @@ class Module {
 	 *
 	 * @param string $template_file The name of the template file to render
 	 *
-	 * @return Returns the output data
+	 * @return string Returns the output data
 	 */
 	function PHPTAL_render($template_file) {
 		// Get configuration
@@ -4166,7 +4450,7 @@ if (!function_exists('array_combine')) {
  * Shortcut to check if a variable is set and is not empty
  */
 function isset_and_non_empty($var) {
-	if (isset($var) && $var != '') return true;
+	if (isset($var) && $var !== '') return true;
 	
 	return false;
 }

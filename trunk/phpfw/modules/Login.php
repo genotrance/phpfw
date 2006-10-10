@@ -32,28 +32,28 @@ class Login extends Module {
 	 *
 	 * Default: 'user'
 	 */
-	var $table;
+	var $table = 'user';
 
 	/**
 	 * @var string $table Name of the field that contains the primary key
 	 *
 	 * Default: 'user_id'
 	 */
-	var $key_field;
+	var $key_field = 'user_id';
 
 	/**
 	 * @var string $table Name of the field that contains the user name
 	 *
 	 * Default: 'email'
 	 */
-	var $user_field;
+	var $user_field = 'email';
 
 	/**
 	 * @var string $table Name of the field that contains the password (encrypted using PASSWORD())
 	 *
 	 * Default: 'password'
 	 */
-	var $pass_field;
+	var $pass_field = 'password';
 	
 	/**
 	 * Constructor for Login module
@@ -75,22 +75,12 @@ class Login extends Module {
 	 * Get the configuration from the config file
 	 */
 	function get_configuration() {
-		// Default initialize
-		$this->table = 'user';
-		$this->key_field = 'user_id';
-		$this->user_field = 'email';
-		$this->pass_field = 'password';
-
 		// Load values from config file if applicable
 		if (isset($this->application->config['login'])) {
-			if (isset_and_non_empty($this->application->config['login']['table']))
-				$this->table = $this->application->config['login']['table'];
-			if (isset_and_non_empty($this->application->config['login']['key_field']))
-				$this->key_field = $this->application->config['login']['key_field'];
-			if (isset_and_non_empty($this->application->config['login']['user_field']))
-				$this->user_field = $this->application->config['login']['user_field'];
-			if (isset_and_non_empty($this->application->config['login']['pass_field']))
-				$this->pass_field = $this->application->config['login']['pass_field'];
+			$keys = explode(' ', 'table key_field user_field pass_field');
+			foreach ($keys as $key)
+				if (isset_and_non_empty($this->application->config['login'][$key]))
+					$this->$key = $this->application->config['login'][$key];
 		}
 	}
 	
