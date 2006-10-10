@@ -23,10 +23,10 @@ function check_date (myDateObj) {
 			var test = new Date(year,month-1,date);
 
 			if (year == y2k(test.getYear()) && (month-1 == test.getMonth()) && (date == test.getDate())) return true;
-			else return date_error(myDateObj, 'Invalid date: date does not exist!');
+			else return date_error('Invalid date: date does not exist!');
 		}
 		else return date_error(myDateObj, 'Invalid date: expected format mm-dd-yyyy');
 	}
 	else return date_error(myDateObj, 'Invalid date: expected format mm-dd-yyyy');
 }
-function date_error(myDateObj, text) {alert(text);myDateObj.value = '';return false;}
+function date_error(myDateObj, text) {alert(text);myDateObj.value = '';myDateObj.focus();return false;}
