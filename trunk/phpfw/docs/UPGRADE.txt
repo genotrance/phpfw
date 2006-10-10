@@ -1,0 +1,20 @@
+==================
+Version 0.1 => 0.2
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+Email.php
+- Replace old version
+
+index.php
+- Update 'Application()' constructor call, fewer parameters expected
+
+config.ini
+- Incorporate new [application] section
+
+form.js
+- Replace old version
