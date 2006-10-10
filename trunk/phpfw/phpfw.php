@@ -636,6 +636,16 @@ class Form {
 	var $table_ids;
 	
 	/**
+	 * @var array Array of table objects to load in this form
+	 */
+	var $links;
+
+	/**
+	 * @var array Array of table IDs if an update form
+	 */
+	var $link_ids;
+	
+	/**
 	 * @var array Associative array of CSS class names
 	 *
 	 * This array is used by the View::create_form() function to specify the
@@ -662,6 +672,8 @@ class Form {
 		$this->data = array();
 		$this->tables = array();
 		$this->table_ids = array();
+		$this->links = array();
+		$this->link_ids = array();
 		$this->css_class = array();
 	}
 
@@ -694,6 +706,9 @@ class Form {
 		if (is_array($table_name)) {
 			// Multiple tables (and IDs to add)
 			for ($i = 0; $i < count($table_name); $i++) {
+				// Check for duplicates
+				$this->check_duplicate_table($table_name[$i]);
+				
 				$table =& $GLOBALS['__application']->database->get_table_by_name($table_name[$i]);
 				$this->tables[] =& $table;
 				
@@ -706,11 +721,77 @@ class Form {
 					$this->table_ids[] = 0;
 			}
 		} else if (is_string($table_name)) {
+			// Check for duplicates
+			$this->check_duplicate_table($table_name);
+			
 			// Just a single table
 			$table =& $GLOBALS['__application']->database->get_table_by_name($table_name);
 			$this->tables[] =& $table;
 			$this->table_ids[] = $table_id;
 		}
+	}
+
+	/**
+	 * Add a table link which will be populated when the form is processed
+	 *
+	 * All tables added using Form::add_table() will be linked to the tables added using 
+	 * Form::add_link() if the corresponding table1_table2 link table exists in the database.
+	 *
+	 * Multiple tables can be added. Function expects the name of the table and optionally the
+	 * ID of the row in this table.
+	 *
+	 * E.g. 
+	 * - Adding a single table and ID : add_link('table_name', 5);
+	 * - Adding multiple tables and IDs : add_link(array('table1', 'table2'), array(5, 2));
+	 *
+	 * @param mixed $table_name Name of the table to add (either a string or array of strings to add multiple tables)
+	 * @param mixed $table_id ID of the row in this table to link the form table with (either int or array of ints to add multiple table IDs)
+	 */
+	function add_link($table_name, $table_id) {
+		// Handle both cases of just a single table or a list of tables provided in a string
+		if (is_array($table_name)) {
+			// Multiple tables (and IDs to add)
+			for ($i = 0; $i < count($table_name); $i++) {
+				// Check for duplicates
+				$this->check_duplicate_table($table_name[$i]);
+
+				$table =& $GLOBALS['__application']->database->get_table_by_name($table_name[$i]);
+				$this->links[] =& $table;
+				
+				if (is_array($table_id)) {
+					if (count($table_name) != count($table_id))
+						$GLOBALS['__application']->error->display_error(
+							'ERROR_FORM_INCOMPATIBLE_NUMBER_FOR_ADD_LINK', count($table_name), count($table_id));
+					$this->link_ids[] = $table_id[$i];
+				} else
+					$GLOBALS['__application']->error->display_error('ERROR_FORM_MISSING_TABLE_IDS_FOR_ADD_LINK');
+			}
+		} else if (is_string($table_name)) {
+			// Check for duplicates
+			$this->check_duplicate_table($table_name);
+
+			// Just a single table
+			$table =& $GLOBALS['__application']->database->get_table_by_name($table_name);
+			$this->links[] =& $table;
+			$this->link_ids[] = $table_id;
+		}
+	}
+	
+	/**
+	 * Check if added table is already present in $this->tables or $this->links
+	 *
+	 * Internal function, do not use.
+	 *
+	 * @param string $table_name Name of the table to check
+	 */
+	function check_duplicate_table($table_name) {
+		for ($i = 0; $i < count($this->tables); $i++)
+			if ($this->tables[$i]->name == $table_name)
+				$GLOBALS['__application']->error->display_error('ERROR_FORM_DUPLICATE_TABLE_NAME', $table_name);
+		
+		for ($i = 0; $i < count($this->links); $i++)
+			if ($this->links[$i]->name == $table_name)
+				$GLOBALS['__application']->error->display_error('ERROR_FORM_DUPLICATE_TABLE_NAME_LINK', $table_name);
 	}
 	
 	/**
@@ -777,6 +858,7 @@ class Form {
 			}
 			
 			// Loop through each column
+			$user_id = '';
 			foreach ($table->columns as $column) {
 				// Skip primary key
 				if ($column->name != $table->primary_key) {
@@ -784,6 +866,20 @@ class Form {
 					$view = new View($column->get_external_name().": ");
 					$view->label($column->name);
 					$label = $view->get_data();
+					
+					// If this field is the user_id for the Login module, add current user's user_id as a hidden field
+					if (isset($GLOBALS['__application']->controller->modules['Login']) && isset($_SESSION['session_user_id'])) {
+						$login = $GLOBALS['__application']->controller->modules['Login'];
+						if ($column->name == $login->key_field) {
+							// Create hidden element
+							if (isset($row[$column->external_name]))
+								$view->input_hidden($login->key_field, $row[$column->external_name]);
+							else
+								$view->input_hidden($login->key_field, $_SESSION['session_user_id']);
+							$user_id = $view->get_data();
+							continue;
+						}
+					}
 					
 					// Check if required field
 					if ($column->get_is_required()) {
@@ -801,6 +897,7 @@ class Form {
 						case "N":
 						case "C":
 						case "D":
+						case "T":
 							// Input box
 							$view->reset_data();
 							$properties = array(
@@ -901,11 +998,25 @@ class Form {
 			}
 			
 			// Add to the form array
-			$this->data[$blank] = $view->get_data().'&nbsp;';
+			$this->data[$blank] = $view->get_data().$user_id.'&nbsp;';
 		}
 		
 		// Add submit and cancel buttons
-		$view = new View();
+		$view->reset_data();
+		
+		// Add hidden elements for any add_link() entries
+		$link_tables = '';
+		if (count($this->links) && count($this->link_ids)) {
+			for ($i = 0; $i < count($this->links); $i++) {
+				$view->input_hidden("links[".$this->links[$i]->name."]", $this->links[$i]->name);
+				$link_tables .= $view->get_data();
+				$view->input_hidden("link_ids[".$this->links[$i]->name."]", $this->link_ids[$i]);
+				$link_tables .= $view->get_data();
+			}
+		}
+		
+		// Add submit and cancel buttons
+		$view->reset_data();
 		
 		// Set the CSS class if specified
 		if (isset($this->css_class["input"]))
@@ -926,7 +1037,7 @@ class Form {
 		
 		// Add to table
 		$blank = $view->get_unique_blank_key($this->data);
-		$this->data[$blank] = $view->get_data();
+		$this->data[$blank] = $link_tables.$view->get_data();
 		
 		// Set the CSS class if specified
 		$table = $tr = $td = 0;
@@ -1014,6 +1125,17 @@ class Form {
 				if ((!isset_and_non_empty($_POST[$column->name])) && $column->get_is_required())
 					$GLOBALS['__application']->error->display_error('ERROR_FORM_REQUIRED_VARIABLE_MISSING', $column->external_name);
 				
+				// If a DATE field
+				// - Check if a valid date
+				// - Convert to DB date format
+				if ($column->type == "D") {
+					if ($this->check_date($_POST[$column->name]) == false)
+						$GLOBALS['__application']->error->display_error('ERROR_FORM_INVALID_DATE', 
+							$column->external_name, $_POST[$column->name]);
+					
+					$_POST[$column->name] = $this->convert_date($_POST[$column->name], true);
+				}
+				
 				// Append the column details for the insert/update query
 				$insert_fields .= $column->name.',';
 				$value = addslashes($_POST[$column->name]);
@@ -1057,7 +1179,7 @@ class Form {
 			}
 		}
 		
-		// Make links
+		// Make implicit links
 		$completed_tables = array();
 		foreach ($tables as $table) {
 			// Do this only for inserts, not needed for updates
@@ -1085,6 +1207,97 @@ class Form {
 				}
 			}
 		}
+
+		// Make explicit links - tables specified using Form::add_links()
+		$completed_tables = array();
+		if (isset($_POST['links'])) {
+			// Check that specified link tables exist and is a data table, and get the Table object
+			$linktables = $_POST['links'];
+			$linkids = $_POST['link_ids'];
+			foreach ($linktables as $table_name) {
+				$linktables[$table_name] = $GLOBALS['__application']->database->get_table_by_name($table_name);
+				
+				if ($linktables[$table_name]->get_type() != DATA)
+					$GLOBALS['__application']->error->display_error('ERROR_FORM_INVALID_TABLE_IN_FORM', $table_name);
+			}
+			foreach ($tables as $table) {
+				// Do this only for inserts, not needed for updates
+				if (count($inserted_ids)) {
+					if (count($table->get_linked_to())) {
+						$links =& $table->get_linked_to();
+						foreach ($links as $link) {
+							// Skip links already made
+							if (isset($completed_tables[$link->name]) && $completed_tables[$link->name]) continue;
+
+							// Get table linked to
+							$linked_tables =& $link->get_linked_to();
+							$link_tname =& $linked_tables[0];
+							if ($link_tname->name == $table->name)
+								$link_tname =& $linked_tables[1];
+
+							if (array_key_exists($link_tname->name, $linktables)) {
+								$inserted_fields = $table->name."_id,".$link_tname->name."_id";
+								$inserted_values = $inserted_ids[$table->name].','.$linkids[$link_tname->name];
+								$GLOBALS['__application']->database->sql->update_query(
+									'SQL_INSERT', $link->name, $inserted_fields, $inserted_values);
+								$completed_tables[$link->name] = true;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * This function converts a date of format yyyy-mm-dd to mm-dd-yyyy and vice versa
+	 *
+	 * @param string $date_str The input date
+	 * @param bool $year_first If true, convert to yyyy-mm-dd else convert to mm-dd-yyyy
+	 *
+	 * @return Returns the resulting date string
+	 */
+	function convert_date($date_str, $year_first=false) {
+		if ($year_first) {
+			// Convert mm-dd-yyyy to yyyy-mm-dd
+			$month = substr($date_str, 0, 2);
+			$date = substr($date_str, 3, 2);
+			$year = substr($date_str, 6, 4);
+			$sep = substr($date_str, 2, 1);
+
+			return $year.$sep.$month.$sep.$date;
+		} else {
+			// Convert yyyy-mm-dd to mm-dd-yyyy
+			$month = substr($date_str, 5, 2);
+			$date = substr($date_str, 8, 2);
+			$year = substr($date_str, 0, 4);
+			$sep = substr($date_str, 4, 1);
+
+			return $month.$sep.$date.$sep.$year;
+		}
+	}
+	
+	/**
+	 * Check if an mm-dd-yyyy formatted date is valid
+	 *
+	 * @param string $date_str The date string to validate
+	 *
+	 * @return Returns true if valid else false
+	 */
+	function check_date($date_str) {
+		$sep = '-';
+		
+		if (strlen($date_str) == 10 && substr($date_str, 2, 1) == $sep && substr($date_str, 5, 1) == $sep) {
+			$month = substr($date_str, 0, 2);
+			$date = substr($date_str, 3, 2);
+			$year = substr($date_str, 6, 4);
+
+			if (is_numeric($date) && is_numeric($month) && is_numeric($year) &&
+				$date > 0 && $date < 32 && $month > 0 && $month < 13 && $year > 999)
+				return true;
+		}
+
+		return false;
 	}
 }
 
@@ -2515,6 +2728,10 @@ class Table {
 					$column->enums[$i] = trim($column->enums[$i], "'");
 				$this->columns[$column->name]->set_values($column->enums);
 				$this->columns[$column->name]->set_type("E");
+			} else if ($this->columns[$column->name]->get_type() == "D") {
+				$this->columns[$column->name]->set_size(10);
+			} else if ($this->columns[$column->name]->get_type() == "T") {
+				$this->columns[$column->name]->set_size(5);
 			}
 		}
 	}
@@ -2586,14 +2803,43 @@ class Table {
 	function get_table_rows($options='') {
 		// Create the table header
 		$header = array();
-		foreach ($this->columns as $column)
+		$date_fields = array();
+		foreach ($this->columns as $column) {
 			$header[] = $column->get_external_name();
+			
+			if ($column->get_type() == "D")
+				$date_field[] = true;
+			else
+				$date_field[] = false;
+		}
 
+		// If the user is logged in and this table has a user_id field, filter by user
+		if (isset($GLOBALS['__application']->controller->modules['Login']) && isset($_SESSION['session_user_id'])) {
+			$login = $GLOBALS['__application']->controller->modules['Login'];
+			if (array_key_exists($login->key_field, $this->columns)) {
+				$where = "where ".$login->key_field."=".$_SESSION['session_user_id'];
+				$options = $this->process_sql_options($options, $where);
+			}
+		}
+		
 		// Perform the query
 		$rows = $GLOBALS['__application']->database->sql->select_query('SQL_SELECT', $this->name, $options);
 		if (count($rows)) {
+			$form = new Form();
+			
+			// Convert yyyy-mm-dd dates to mm-dd-yyyy
+			for ($i = 0; $i < count($rows); $i++) {
+				$keys = array_keys($rows[$i]);
+				for ($j = 0; $j < count($keys); $j++) {
+					if ($date_field[$j] == true) {
+						$rows[$i][$keys[$j]] = $form->convert_date($rows[$i][$keys[$j]]);
+					}
+				}
+			}
+			
 			// Add the header to the result
 			array_unshift($rows, $header);
+			
 			return $rows;
 		} else {
 			// No rows so return just the header
@@ -2611,10 +2857,11 @@ class Table {
 	 * @param string $update_action Action to execute when update button is clicked(Format: Module:action)
 	 * @param string $del_action Action to execute when delete button is clicked(Format: Module:action)
 	 * @param string $options Specify options to filter or order the results. (default: "")
+	 * @param string $params Parameters required for the view, update and delete module:action combinations in "param=value&param=value" format. (default: 0)
 	 *
 	 * @return array Returns an array of rows where each row is an associative array with column names as the key.
 	 */
-	function get_table_rows_with_actions($view_action=0, $update_action=0, $del_action=0, $options='') {
+	function get_table_rows_with_actions($view_action=0, $update_action=0, $del_action=0, $options='', $params='') {
 		// Get all the table rows
 		$rows = $this->get_table_rows($options);
 
@@ -2644,8 +2891,12 @@ class Table {
 					if ($value) {
 						$module = strtok($value, ':');
 						$action = strtok(':');
+						if ($params != '')
+							$params .= "&".$this->primary_key.'='.$rows[$i][$this->primary_key];
+						else
+							$params = $this->primary_key.'='.$rows[$i][$this->primary_key];
 						$view->add_element("a", $key, $properties, $delimit, 
-							$GLOBALS['__application']->controller->encode_url($module, $action, $this->primary_key.'='.$rows[$i][$this->primary_key]));
+							$GLOBALS['__application']->controller->encode_url($module, $action, $params));
 					}
 				}
 				$view->compile_template();
@@ -2654,6 +2905,54 @@ class Table {
 				array_push($rows[$i], $view->get_data());
 			}
 		}
+		
+		return $rows;
+	}
+	
+	/**
+	 * Get all the link rows with the action field for the specified ID in this table
+	 *
+	 * If a Module:action is not specified, that action is not displayed. E.g. The update action is not displayed
+	 * if $update_action is set to 0.
+	 *
+	 * @param int $table_id Primary key value for the row
+	 * @param string $link_table_name Name of the table to which links need to be found
+	 * @param string $view_action Action to execute when view button is clicked (Format: Module:action)
+	 * @param string $update_action Action to execute when update button is clicked(Format: Module:action)
+	 * @param string $del_action Action to execute when delete button is clicked(Format: Module:action)
+	 * @param string $options Specify options to filter or order the results. (default: "")
+	 * @param string $params Parameters required for the view, update and delete module:action combinations in "param=value&param=value" format. (default: 0)
+	 *
+	 * @return array Returns an array of rows where each row is an associative array with column names as the key.
+	 */
+	function get_table_row_links_with_actions($table_id, $link_table_name, $view_action=0, $update_action=0, $del_action=0, $options='', $params='') {
+		// Empty rows
+		$row = array();
+		
+		// Get the link rows for the specified ID
+		$links = $this->get_table_row_links($table_id);
+		$link_tables = $links[0];
+		$link_ids = $links[1];
+
+		// Search for the link table
+		for ($i = 0; $i < count($link_tables); $i++)
+			if ($link_tables[$i]->name == $link_table_name) {
+				// Create where clause for the specified ids
+				$primary_key = $link_tables[$i]->primary_key;
+				$where = 'where';
+				$ids = $link_ids[$i];
+				$id = strtok($ids, ':');
+				while ($id !== false) {
+					$where .= " ".$primary_key."=$id or";
+					$id = strtok(':');
+				}
+				// Get rid of the last "or" and add to sql options
+				$where = substr($where, 0, strlen($where)-3);
+				$options = $this->process_sql_options($options, $where);
+				
+				// Get the rows with the above ids
+				$rows = $link_tables[$i]->get_table_rows_with_actions($view_action, $update_action, $del_action, $options, $params);
+			}
 		
 		return $rows;
 	}
@@ -2723,13 +3022,13 @@ class Table {
 	 * This function checks the table's $links array and searches all its link tables for
 	 * the specified ID. If it exists, it means that this row has a link with the other table.
 	 *
-	 * @param int $table_id Primary key value for the row
-	 *
-	 * @return array Returns an array of tables linked to and an array of IDs in that table.
-	 *
 	 * Result = array(
 	 *    array(Table1 Object, Table2 Object, ...),
 	 *    array(Table1 ID1:Table1 ID2:Table1:ID3, Table2 ID, ...));
+	 *
+	 * @param int $table_id Primary key value for the row
+	 *
+	 * @return array Returns an array of tables linked to and an array of IDs in that table.
 	 */
 	function get_table_row_links($table_id) {
 		$valid_linked_tables = array();
@@ -2813,6 +3112,32 @@ class Table {
 	function get_table_row_and_link_rows_for_view($table_id, &$data, $show_name=true) {
 		$this->get_table_row_for_view($table_id, $data, $show_name);
 		$this->get_table_row_link_rows_for_view($table_id, $data, $show_name);
+	}
+
+	/**
+	 * Helper function to concatenate options to the SQL syntax, internal function, do not use
+	 *
+	 * @param string $options Existing options
+	 * @param string $where Additional where options to add
+	 *
+	 * @return string Returns the final options syntax
+	 */
+	function process_sql_options($options, $where) {
+		if ($options != '') {
+			// Some options already specified
+			if (stristr($options, "where") != '') {
+				// Existing where, prepend $where check
+				$options = str_ireplace("where", "$where and", $options);
+			} else {
+				// No where but something else, prepend where
+				$options = "$where $options";
+			}
+		} else {
+			// No options, set to $where
+			$options = $where;
+		}
+		
+		return $options;
 	}
 	
 	/**
@@ -2948,7 +3273,7 @@ class Database {
 				$table_primary_key = $primary_keys[$table];
 			else
 				$table_primary_key = '';
-			
+
 			// Create table object
 			$this->tables[$table] = new Table($table, $table_external_name, $table_primary_key);
 		}
@@ -2995,7 +3320,7 @@ class Database {
 		
 		// Process all potential LINK tables
 		foreach ($tables as $table) {
-			if ($this->tables[$table]->type != DATA) {
+			if ($this->tables[$table]->type !== DATA) {
 				// Break the table into its component names
 				$tnames = explode('_', $table);
 
@@ -3319,7 +3644,29 @@ class Module {
 	 * Once populated, the queries will be available to the Sql::*_query() methods.
 	 */
 	var $queries;
+	
+	/*
+	 * @var bool Specify if this module uses the template library
+	 *
+	 * - If set to TRUE and if a templating framework is specified in the configuration file, 
+	 * the Module::render() function uses the templating library to generate the output. 
+	 * - If set to FALSE using Module::disable_template_library(), the Module::render() function
+	 * generates the output using the View class instead.
+	 *
+	 * See an example of how this is used in the Login module.
+	 *
+	 * Module::$use_template_library is default initilized to TRUE. 
+	 */
+	var $use_template_library;
 
+	/**
+	 * @var string The name of the template file if using a template library
+	 *
+	 * This is auto-detected as Module#action. The Module::set_template_file() function
+	 * allows changing this to a custom file.
+	 */
+	var $template_file;
+	
 	/**
 	 * @var object Application A reference to the Application object
 	 *
@@ -3472,6 +3819,52 @@ class Module {
 	}
 
 	/**
+	 * Disable usage of the template library to render the output of the module.
+	 *
+	 * On calling this function, the Module::render() function generates the output using the View class 
+	 * instead of the templating library when it is specified in the configuration file. This allows to make
+	 * exceptions. See an example of how this is used in the Login module.
+	 *
+	 * This method can be called in a module's action to make an exception for that action or in the module's
+	 * constructor to make the exception across all the module's actions.
+	 *
+	 */
+	function disable_template_library() {
+		$this->use_template_library = false;
+	}
+
+	/**
+	 * Enable usage of the template library to render the output of the module.
+	 *
+	 * On calling this function, the Module::render() function generates the output using the templating
+	 * library instead of the View class if a templating library is defined in the configuration. The default
+	 * setting is to use the templating library if defined. 
+	 * 
+	 * However, this method can be called by an action where the module disables the templating libraries 
+	 * across the board in its constructor using Module::disable_template_library(). As a result, the action can
+	* make an exception and still use the library if available.
+	 *
+	 * This method should be called in a module's action to make an exception for that action assuming that the
+	 * module constructor calls Module::disable_template_library().
+	 *
+	 */
+	function enable_template_library() {
+		$this->use_template_library = false;
+	}
+
+	/**
+	 * Set a custom template file if using a templating library
+	 *
+	 * The template file is auto-detected as Module#action. Using this function, it can be changed to a
+	 * custom name. File extension is dependent on the templating library and does not need to be specified.
+	 *
+	 * @param string $template_file Name of the template file
+	 */
+	function set_template_file($template_file) {
+		$this->template_file  = $template_file;
+	}
+
+	/**
 	 * Get the exceptions registered by the Module
 	 *
 	 * The controller automatically calls this function to register the exceptions.
@@ -3505,10 +3898,11 @@ class Module {
 	/**
 	 * Reset the Module::$output
 	 *
-	 * This function is called by the controller at load time
+	 * This function is called by the controller at load time. It is used to default initialize all members of the module.
 	 */
 	function initialize() {
-		if (isset_and_non_empty($this->application->config['template']['framework']))
+		if ($this->use_template_library && 
+			isset_and_non_empty($this->application->config['template']['framework']))
 			$this->output = array();
 		else
 			$this->output = '';
@@ -3519,6 +3913,10 @@ class Module {
 			$this->error_strings = array();
 		if (!isset($this->queries))
 			$this->queries = array();
+		if (!isset($this->use_template_library))
+			$this->use_template_library = true;
+		if (!isset($this->template_file))
+			$this->template_file = '';
 	}
 	
 	/**
@@ -3551,12 +3949,40 @@ class Module {
 	}
 	
 	/**
+	 * Get templating library paths
+	 *
+	 * This function sets up the templating library's paths. It is called by Module::*_render() functions.
+	 *
+	 * @param string $path Path to the library
+	 * @param string $template_dir Directory that contains the template files
+	 * @param string $compiled_dir Directory that will contain the compiled templates
+	 */
+	function get_templating_library_paths(&$path, &$template_dir, &$compiled_dir) {
+		// Get the framework path
+		if (!isset_and_non_empty($this->application->config['template']['path']))
+			$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_FRAMEWORK_PATH');
+		$path = $this->application->config['template']['path'];
+
+		// Get the template dir
+		if (!isset_and_non_empty($this->application->config['template']['template_dir']))
+			$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_DIR');
+		$template_dir = $this->application->config['template']['template_dir'];
+
+		// Get the compiled dir
+		if (!isset_and_non_empty($this->application->config['template']['compiled_dir']))
+			$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_COMPILED_DIR');
+		$compiled_dir = $this->application->config['template']['compiled_dir'];
+	}
+	
+	/**
 	 * Render the module HTML output
 	 *
 	 * The functionality of this method depends on whether a templating framework
 	 * is in use or not:
 	 * - This function creates a View and calls the View::render() function on Module::$output
-	 *  if no framework is in use. i.e. template->framework is undefined in config.ini
+	 *  if no framework is in use. i.e. template->framework is undefined in config.ini OR if
+	 * Module::disable_template_library() is called in the module action or constructor when a
+	 * framework is in use.
 	 * - If a framework is in use, this function calls the appropriate *_render() function 
 	 *  for the specified framework. The output is then rendered using View::render() to 
 	 *  add the HTML header.
@@ -3564,7 +3990,8 @@ class Module {
 	 * The controller automatically calls this function. Do not call this function directly.
 	 */
 	function render() {
-		if (isset_and_non_empty($this->application->config['template']['framework'])) {
+		if ($this->use_template_library == true && 
+			isset_and_non_empty($this->application->config['template']['framework'])) {
 			$framework = $this->application->config['template']['framework'];
 
 			// Check which framework
@@ -3577,33 +4004,21 @@ class Module {
 
 			}
 
-			// Get the framework path
-			if (!isset_and_non_empty($this->application->config['template']['path']))
-				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_FRAMEWORK_PATH');
-			$path = $this->application->config['template']['path'];
-
-			// Get the template dir
-			if (!isset_and_non_empty($this->application->config['template']['template_dir']))
-				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_DIR');
-			$template_dir = $this->application->config['template']['template_dir'];
-
-			// Get the compiled dir
-			if (!isset_and_non_empty($this->application->config['template']['compiled_dir']))
-				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_COMPILED_DIR');
-			$compiled_dir = $this->application->config['template']['compiled_dir'];
-
 			// Get the module and action being executed
 			parse_str($this->controller->decode_url());
-			$template_file = "$module#$action";
+			if ($this->template_file == '') 
+				$template_file = "$module#$action";
+			else
+				$template_file = $this->template_file;
 
 			// Call the templating framework's render method
 			$render_method = "${framework}_render";
-			$this->$render_method($template_file, $path, $template_dir, $compiled_dir);
-		} else {
-			// Generate the output using a View object
-			$view = new View($this->output);
-			$view->render();
+			$this->output = $this->$render_method($template_file);
 		}
+		
+		// Generate the output using a View object
+		$view = new View($this->output);
+		$view->render();
 	}
 
 	/**
@@ -3617,15 +4032,21 @@ class Module {
 	 * action is being executed, the template file rendered by Smarty
 	 * is User#show_details.tpl.
 	 *
-	 * The output of the template is then rendered using View::render() to
-	 * add the HTML header.
+	 * The output of the template is then returned.
+	 *
+	 * This function is invoked by Module::render() when Smarty is used as the 
+	 * templating library. It can also be called directly to get the output from a 
+	 * template file in a module action.
 	 *
 	 * @param string $template_file The name of the template file to render
-	 * @param string $path Path to the Smarty framework
-	 * @param string $template_dir Directory that contains the template files
-	 * @param string $compiled_dir Directory that will contain the compiled templates
+	 *
+	 * @return Returns the output data
 	 */
-	function Smarty_render($template_file, $path, $template_dir, $compiled_dir) {
+	function Smarty_render($template_file) {
+		// Get configuration
+		$path = $template_dir = $compiled_dir = '';
+		$this->get_templating_library_paths($path, $template_dir, $compiled_dir);
+		
 		// Set up constants
 		define('SMARTY_DIR', "$path/");
 
@@ -3651,9 +4072,8 @@ class Module {
 		foreach ($this->output as $key => $value)
 			$tpl->assign($key, $value);
 
-		// Display the template
-		$view = new View($tpl->fetch("$template_file.tpl"));
-		$view->render();
+		// Return template output
+		return $tpl->fetch("$template_file.tpl");
 	}
 
 	/**
@@ -3667,15 +4087,21 @@ class Module {
 	 * action is being executed, the template file rendered by PHPTAL
 	 * is User#show_details.html.
 	 *
-	 * The output of the template is then rendered using View::render() to
-	 * add the HTML header.
+	 * The output of the template is then returned.
+	 *
+	 * This function is invoked by Module::render() when PHPTAL is used as the 
+	 * templating library. It can also be called directly to get the output from a 
+	 * template file in a module action.
 	 *
 	 * @param string $template_file The name of the template file to render
-	 * @param string $path Path to the PHPTAL framework
-	 * @param string $template_dir Directory that contains the template files
-	 * @param string $compiled_dir Directory that will contain the compiled templates
+	 *
+	 * @return Returns the output data
 	 */
-	function PHPTAL_render($template_file, $path, $template_dir, $compiled_dir) {
+	function PHPTAL_render($template_file) {
+		// Get configuration
+		$path = $template_dir = $compiled_dir = '';
+		$this->get_templating_library_paths($path, $template_dir, $compiled_dir);
+		
 		// Set up constants
 		define ('PHPTAL_TEMPLATE_REPOSITORY', "$template_dir/");
 		define ('PHPTAL_PHP_CODE_DESTINATION', "$compiled_dir/");
@@ -3718,9 +4144,8 @@ class Module {
 		if (phpversion() < 5) eval ($php4);
 		else eval ($php5);
 
-		// Display the template
-		$view = new View($out);
-		$view->render();
+		// Return template output
+		return $out;
 	}
 }
 
