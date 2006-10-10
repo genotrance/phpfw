@@ -90,15 +90,8 @@ class Application {
 	 * - Executes actions
 	 *
 	 * @param string $config_file Path to the config file for the application
-	 * @param string $session_name The session name
-	 * @param string $session_lifetime The time (in seconds) to keep the session active. (default = 3600)
 	 */
-	function Application($config_file, $session_name, $session_lifetime=3600) {
-		// Start session
-		session_name($session_name);
-		session_set_cookie_params($session_lifetime);
-		session_start();
-		
+	function Application($config_file) {
 		// Initialize members
 		$this->scripts = array();
 		$this->stylesheets = array();
@@ -113,6 +106,11 @@ class Application {
 
 		// Check the configuration file
 		$this->check_configuration_file();
+		
+		// Start session
+		session_name($this->config['application']['name']);
+		session_set_cookie_params($this->config['application']['lifetime']);
+		session_start();
 		
 		// Load errors from file
 		$this->error = new Error($this->config['include']['error']);
@@ -168,10 +166,13 @@ class Application {
 	 */
 	function check_configuration_file() {
 		// Check if all required sections are present
-		$sections = array('database', 'module', 'include', 'template', 'table_name', 'table_key');
+		$sections = array('application', 'database', 'module', 'include', 'template', 'table_name', 'table_key');
 		foreach ($sections as $section)
 			if (!isset($this->config[$section])) 
 				$this->display_error("Missing required configuration file section '$section'.");
+
+		// Check if all application sub-sections are present
+		$this->check_configuration_section('application', array('name', 'lifetime'));
 
 		// Check if all database sub-sections are present
 		$this->check_configuration_section('database', array('adodb', 'type', 'host', 'user', 'name'));
@@ -194,7 +195,7 @@ class Application {
 	function check_configuration_section($section, $sub_sections) {
 		// Check if all include sub-sections are present
 		foreach ($sub_sections as $sub_section)
-			if (!isset($this->config[$section][$sub_section]) || $this->config[$section][$sub_section] == '') 
+			if (!isset_and_non_empty($this->config[$section][$sub_section]))
 				$this->display_error("Missing required configuration file sub-section '$sub_section' for section '$section'.");
 	}
 	
@@ -205,14 +206,14 @@ class Application {
 		// If section defined in config file
 		if (isset($this->config['include'])) {
 			// If script subsection exists
-			if (isset($this->config['include']['scripts']) && $this->config['include']['scripts'] != '') {
+			if (isset_and_non_empty($this->config['include']['scripts'])) {
 				$scripts = explode(" ", $this->config['include']['scripts']);
 				foreach ($scripts as $script)
 					$this->scripts[] = $script;
 			}
 			
 			// If stylesheet subsection exists
-			if (isset($this->config['include']['stylesheets']) && $this->config['include']['stylesheets'] != '') {
+			if (isset_and_non_empty($this->config['include']['stylesheets'])) {
 				$stylesheets = explode(" ", $this->config['include']['stylesheets']);
 				foreach ($stylesheets as $stylesheet)
 					$this->stylesheets[] = $stylesheet;
@@ -316,6 +317,22 @@ class Controller {
 		if (method_exists($this->modules[$module_name], 'get_exceptions')) {
 			$exceptions = $this->modules[$module_name]->get_exceptions();
 			foreach ($exceptions as $exception) $this->add_exception($exception);
+		}
+		
+		// Load errors registered by the module
+		if (method_exists($this->modules[$module_name], 'get_error_strings')) {
+			$error_strings = $this->modules[$module_name]->get_error_strings();
+			$GLOBALS['__application']->error->error_strings = array_merge(
+				$GLOBALS['__application']->error->error_strings,
+				$error_strings);
+		}
+
+		// Load queries registered by the module
+		if (method_exists($this->modules[$module_name], 'get_queries')) {
+			$queries = $this->modules[$module_name]->get_queries();
+			$GLOBALS['__application']->database->sql->queries = array_merge(
+				$GLOBALS['__application']->database->sql->queries,
+				$queries);
 		}
 	}
 
@@ -522,11 +539,11 @@ class Error {
 	function check_errors() {
 		foreach ($this->error_strings as $error_name => $error_data) {
 			// Verify error text is defined
-			if (!isset($error_data['text']) || $error_data['text'] == '')
+			if (!isset_and_non_empty($error_data['text']))
 				die ("Error text unspecified for error '$error_name'");
 
 			// Verify error severity is defined
-			if (!isset($error_data['severity']) || $error_data['severity'] == '')
+			if (!isset_and_non_empty($error_data['severity']))
 				die ("Error severity unspecified for error '$error_name'");
 
 			// Verify valid error severity
@@ -783,6 +800,7 @@ class Form {
 						case "I":
 						case "N":
 						case "C":
+						case "D":
 							// Input box
 							$view->reset_data();
 							$properties = array(
@@ -800,6 +818,10 @@ class Form {
 							// Set required
 							if ($required != "") 
 								$properties["required"] = "required";
+								
+							// If DATE column, call javascript:check_date() to verify mm-dd-yyyy formatting
+							if ($column->type == "D")
+								$properties["onblur"] = "javascript:return check_date(this);";
 							
 							// Create the input box
 							$view->set_properties($properties);
@@ -986,10 +1008,10 @@ class Form {
 				if ($column->name == $table->primary_key) continue;
 				
 				// Skip DATE fields
-				if ($column->type == "T") continue;
+				if ($column->name == DATE_ADDED || $column->name == DATE_UPDATED) continue;
 				
 				// Check that required column has data specified
-				if ((!isset($_POST[$column->name]) || $_POST[$column->name] == '') && $column->get_is_required())
+				if ((!isset_and_non_empty($_POST[$column->name])) && $column->get_is_required())
 					$GLOBALS['__application']->error->display_error('ERROR_FORM_REQUIRED_VARIABLE_MISSING', $column->external_name);
 				
 				// Append the column details for the insert/update query
@@ -2578,7 +2600,64 @@ class Table {
 			return array($header);
 		}
 	}
-	
+
+	/**
+	 * Get all the rows in this table with the action field
+	 *
+	 * If a Module:action is not specified, that action is not displayed. E.g. The update action is not displayed
+	 * if $update_action is set to 0.
+	 *
+	 * @param string $view_action Action to execute when view button is clicked (Format: Module:action)
+	 * @param string $update_action Action to execute when update button is clicked(Format: Module:action)
+	 * @param string $del_action Action to execute when delete button is clicked(Format: Module:action)
+	 * @param string $options Specify options to filter or order the results. (default: "")
+	 *
+	 * @return array Returns an array of rows where each row is an associative array with column names as the key.
+	 */
+	function get_table_rows_with_actions($view_action=0, $update_action=0, $del_action=0, $options='') {
+		// Get all the table rows
+		$rows = $this->get_table_rows($options);
+
+		// Add the action column
+		$view = new View();
+		array_shift($rows[0]);
+		array_push($rows[0], 'Actions');
+		if (count($rows) > 1) {
+			for ($i = 1; $i < count($rows); $i++) {
+				$list = array();
+				$list['view'] = $view_action;
+				$list['update'] = $update_action;
+				$list['del'] = $del_action;
+
+				foreach ($list as $key => $value) {
+					switch ($key) {
+						case 'view':
+						case 'update':
+							$properties = 0;
+							$delimit = 'sp';
+							break;
+						case 'del':
+							$properties = array("onclick" => "javascript:return confirm('Are you sure you want to delete this entry?');");
+							$delimit = 0;
+							break;
+					}
+					if ($value) {
+						$module = strtok($value, ':');
+						$action = strtok(':');
+						$view->add_element("a", $key, $properties, $delimit, 
+							$GLOBALS['__application']->controller->encode_url($module, $action, $this->primary_key.'='.$rows[$i][$this->primary_key]));
+					}
+				}
+				$view->compile_template();
+
+				array_shift($rows[$i]);
+				array_push($rows[$i], $view->get_data());
+			}
+		}
+		
+		return $rows;
+	}
+
 	/**
 	 * Get a specific row from this table
 	 *
@@ -2859,13 +2938,13 @@ class Database {
 		// Create table objects for these tables
 		foreach ($tables as $table) {
 			// Check if external name is specified
-			if (is_array($table_names) && isset($table_names[$table]) && $table_names[$table] != '')
+			if (is_array($table_names) && isset_and_non_empty($table_names[$table]))
 				$table_external_name = $table_names[$table];
 			else
 				$table_external_name = '';
 
 			// Check if primary key is specified
-			if (is_array($primary_keys) && isset($primary_keys[$table]) && $primary_keys[$table] != '')
+			if (is_array($primary_keys) && isset_and_non_empty($primary_keys[$table]))
 				$table_primary_key = $primary_keys[$table];
 			else
 				$table_primary_key = '';
@@ -2890,6 +2969,8 @@ class Database {
 	 */
 	function check_schema() {
 		$tables = array_keys($this->tables);
+		
+		// Process all potential DATA tables
 		foreach ($tables as $table) {
 			// Check if table primary key exists
 			$primary_key = $this->tables[$table]->primary_key;
@@ -2909,7 +2990,12 @@ class Database {
 					(!in_array($this->tables[$table]->columns[DATE_UPDATED]->get_type(), array("T", "DT"))))
 					$GLOBALS['__application']->error->display_error('ERROR_DATABASE_DATE_FIELD_ERROR', 
 						DATE_UPDATED, $this->tables[$table]->name);
-			} else {
+			}
+		}
+		
+		// Process all potential LINK tables
+		foreach ($tables as $table) {
+			if ($this->tables[$table]->type != DATA) {
 				// Break the table into its component names
 				$tnames = explode('_', $table);
 
@@ -2917,8 +3003,8 @@ class Database {
 				if (in_array($tnames[0], $tables) && in_array($tnames[1], $tables) &&
 					$this->tables[$tnames[0]]->type == DATA &&
 					$this->tables[$tnames[1]]->type == DATA &&
-					array_key_exists("${tnames[0]}_id", $this->tables[$table]->columns) &&
-					array_key_exists("${tnames[1]}_id", $this->tables[$table]->columns)) {
+					array_key_exists($this->tables[$tnames[0]]->primary_key, $this->tables[$table]->columns) &&
+					array_key_exists($this->tables[$tnames[1]]->primary_key, $this->tables[$table]->columns)) {
 					// Link table component names are valid tables
 					$this->tables[$table]->type = LINK;
 
@@ -3201,12 +3287,38 @@ class Module {
 	 *
 	 * Format: array('action1', 'action2', 'action3'); where actions are class methods.
 	 *
-	 * This member needs to be populated in the Module's constructor. E.g.
-	 * - $this->exceptions = array('action1', 'action2', ...);
+	 * This member needs to be populated in the Module's constructor using the 
+	 * Module::register_exception() function. E.g.
+	 * - $this->register_exception('action1');
+	 *
+	 * Multiple exceptions can be registered by calling the function multiple times.
 	 *
 	 * See Controller::$exceptions for how the exceptions are used.
 	 */
 	var $exceptions;
+	
+	/*
+	 * @var array List of registered error strings and severities hashed by error name
+	 *
+	 * Format:
+	 * - $this->error_strings['ERROR_NAME']['text'] = "error string";
+	 * - $this->error_strings['ERROR_NAME']['severity'] = "error severity";
+	 *
+	 * Use the Module::register_error() method to populate this list in the module's constructor. 
+	 * Once populated, the error strings will be available to the Error::display_error() method.
+	 */
+	var $error_strings;
+
+	/*
+	 * @var array List of registered SQL queries hashed by query name
+	 *
+	 * Format:
+	 * - $this->queries['SQL_QUERY_NAME'] = "SQL query syntax";
+	 *
+	 * Use the Module::register_query() method to populate this list in the module's constructor. 
+	 * Once populated, the queries will be available to the Sql::*_query() methods.
+	 */
+	var $queries;
 
 	/**
 	 * @var object Application A reference to the Application object
@@ -3289,6 +3401,77 @@ class Module {
 	}
 	
 	/**
+	 * Register a module exception
+	 *
+	 * This function needs to be called in the Module's constructor. E.g.
+	 * - $this->register_exception('action1');
+	 *
+	 * Multiple exceptions can be registered by calling the function multiple times.
+	 *
+	 * See Controller::$exceptions for how the exceptions are used.
+	 */
+	function register_exception($action) {
+		// Initialize if not done already
+		if (!isset($this->exceptions)) $this->exceptions = array();
+		
+		// Add exception if not already added
+		if (!in_array($action, $this->exceptions))
+			$this->exceptions[] = $action;
+	}
+	
+	/**
+	 * Register a module error string
+	 *
+	 * This function needs to be called in the Module's constructor. E.g.
+	 * - $this->register_error('ERROR_NAME', 'error string', 'error severity');
+	 *
+	 * Multiple errors can be registered by calling the function multiple times. Ensure that $error_name
+	 * is unique for every call. It is also recommended to have your module's name as part of $error_name
+	 * to ensure it does not conflict with other modules.
+	 *
+	 * See Error::display_error() for how the error strings can be used.
+	 *
+	 * @param string $error_name Name of the error - e.g. ERROR_MISSING_BLAH
+	 * @param string $error_text The text message associated with the error. All instances of %s are replaced by the parameters provided to Error::display_error().
+	 * @param string $error_severity The severity of the error message - valid values are ERROR, WARNING, STOP, MESSAGE
+	 */
+	function register_error($error_name, $error_text, $error_severity) {
+		// Initialize if not done already
+		if (!isset($this->error_strings)) $this->error_strings = array();
+
+		// Add if not already added
+		if (!in_array($error_name, $this->error_strings)) {
+			$this->error_strings[$error_name]['text'] = $error_text;
+			$this->error_strings[$error_name]['severity'] = $error_severity;
+		}
+	}
+	
+	/**
+	 * Register a module SQL query
+	 *
+	 * This function needs to be called in the Module's constructor. E.g.
+	 * - $this->register_query('SQL_QUERY_NAME', 'SQL query syntax');
+	 *
+	 * Multiple queries can be registered by calling the function multiple times. Ensure that $query_name
+	 * is unique for every call. It is also recommended to have your module's name as part of $query_name
+	 * to ensure it does not conflict with other modules.
+	 *
+	 * See Sql::select_query() for how the queries can be used.
+	 *
+	 * @param string $query_name Name of the query - e.g. SQL_SPECIAL_QUERY
+	 * @param string $query_text The actual SQL query. All instances of %s are replaced by the parameters provided to Sql::*_query() functions.
+	 */
+	function register_query($query_name, $query_text) {
+		// Initialize if not done already
+		if (!isset($this->queries)) $this->queries = array();
+		
+		// Add if not already added
+		if (!in_array($query_name, $this->queries)) {
+			$this->queries[$query_name] = $query_text;
+		}
+	}
+
+	/**
 	 * Get the exceptions registered by the Module
 	 *
 	 * The controller automatically calls this function to register the exceptions.
@@ -3302,19 +3485,40 @@ class Module {
 	}
 	
 	/**
+	 * Get the error strings registered by the Module
+	 *
+	 * The controller automatically calls this function to register the error strings.
+	 */
+	function get_error_strings() {
+		return $this->error_strings;
+	}
+
+	/**
+	 * Get the queries registered by the Module
+	 *
+	 * The controller automatically calls this function to register the queries.
+	 */
+	function get_queries() {
+		return $this->queries;
+	}
+
+	/**
 	 * Reset the Module::$output
 	 *
 	 * This function is called by the controller at load time
 	 */
 	function initialize() {
-		if (isset($this->application->config['template']['framework']) &&
-			$this->application->config['template']['framework'] != '')
+		if (isset_and_non_empty($this->application->config['template']['framework']))
 			$this->output = array();
 		else
 			$this->output = '';
 		
 		if (!isset($this->exceptions))
 			$this->exceptions = array();
+		if (!isset($this->error_strings))
+			$this->error_strings = array();
+		if (!isset($this->queries))
+			$this->queries = array();
 	}
 	
 	/**
@@ -3343,7 +3547,7 @@ class Module {
 		$this->controller->check_module_action("$module:$action");
 		
 		// Execute the module action
-		return call_user_func_array(array($this->controller->modules[$module], $action), $args);
+		return call_user_func_array(array(&$this->controller->modules[$module], $action), $args);
 	}
 	
 	/**
@@ -3360,7 +3564,7 @@ class Module {
 	 * The controller automatically calls this function. Do not call this function directly.
 	 */
 	function render() {
-		if (isset($this->application->config['template']['framework'])) {
+		if (isset_and_non_empty($this->application->config['template']['framework'])) {
 			$framework = $this->application->config['template']['framework'];
 
 			// Check which framework
@@ -3374,20 +3578,17 @@ class Module {
 			}
 
 			// Get the framework path
-			if (!isset($this->application->config['template']['path']) || 
-				$this->application->config['template']['path'] == '')
+			if (!isset_and_non_empty($this->application->config['template']['path']))
 				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_FRAMEWORK_PATH');
 			$path = $this->application->config['template']['path'];
 
 			// Get the template dir
-			if (!isset($this->application->config['template']['template_dir']) ||
-				$this->application->config['template']['template_dir'] == '')
+			if (!isset_and_non_empty($this->application->config['template']['template_dir']))
 				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_DIR');
 			$template_dir = $this->application->config['template']['template_dir'];
 
 			// Get the compiled dir
-			if (!isset($this->application->config['template']['compiled_dir']) ||
-				$this->application->config['template']['compiled_dir'] == '')
+			if (!isset_and_non_empty($this->application->config['template']['compiled_dir']))
 				$this->error->display_error('ERROR_MODULE_MISSING_TEMPLATE_COMPILED_DIR');
 			$compiled_dir = $this->application->config['template']['compiled_dir'];
 
@@ -3437,13 +3638,11 @@ class Module {
 		$tpl->compile_dir = $compiled_dir;
 
 		// Check for optional config
-		if (isset($this->application->config['template']['cache_dir']) &&
-			$this->application->config['template']['cache_dir'] != '') {
+		if (isset_and_non_empty($this->application->config['template']['cache_dir'])) {
 			$tpl->caching = 1;
 			$tpl->cache_dir = $this->application->config['template']['cache_dir'];
 		}
-		if (isset($this->application->config['template']['config_dir']) &&
-			$this->application->config['template']['config_dir'] != '')
+		if (isset_and_non_empty($this->application->config['template']['config_dir']))
 			$tpl->config_dir = $this->application->config['template']['config_dir'];
 
 		// Add the variables defined in Module::$output to object
@@ -3536,6 +3735,15 @@ if (!function_exists('array_combine')) {
 
 		return $final;
 	}
+}
+
+/*
+ * Shortcut to check if a variable is set and is not empty
+ */
+function isset_and_non_empty($var) {
+	if (isset($var) && $var != '') return true;
+	
+	return false;
 }
 
 ?>
