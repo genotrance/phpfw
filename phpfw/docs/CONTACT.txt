@@ -1,7 +1,0 @@
-Contact genosha@genotrance.com for any questions regarding
-this program. 
-
-Visit the Phpfw website for the latest updates and links to
-the API documentation.
-	http://www.genotrance.com
-	http://www.freshmeat.net/projects/phpfw

@@ -24,7 +24,7 @@ class Email {
 		// Main headers
 		$headers = 
 			"MIME-Version: 1.0\n" .
-			"From: $from\n" .
+			"$from\n" .
 			"Content-Type: multipart/alternative; boundary = $boundary\n\n" .
 			"This is a MIME encoded message.\n\n";
 	
