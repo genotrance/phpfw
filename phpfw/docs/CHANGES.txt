@@ -1,0 +1,69 @@
+============================
+Mon Mar 27 23:20:12 CST 2006
+============================
+
+Enhancements
+------------
+- Modules can now register errors and SQL queries which can then be invoked
+  using the Error::display_error() and the Sql::*_query() functions respectively.
+  This is done with the Module::register_error() and Module::register_query()
+  functions in the module's constructor.
+- Similarly, module exceptions can be registered using Module::register_exception().
+- Added Login::update_login() to update the user's login in the user table.
+- Added Login::change_password() to update the user's password in the user table.
+
+Bug Fixes
+---------
+- Fixed bug in Login.php where Login::check_login() was calling Login::login_user_form()
+  instead of Login::login_user().
+- Fixed bug in Module::exec_module_action() where the executed action was operating on
+  a new instance of the executed module instead of the one instantiated by the controller.
+  Issue only occurs under PHP 4.
+
+============================
+Mon Mar 27 00:24:00 CST 2006
+============================
+
+Enhancements
+------------
+- Added support for DATE columns. Form element is an input text box with javascript
+  checking to ensure input is in mm-dd-yyyy format.
+
+Bug Fixes
+---------
+- Fixed bug in Database::check_schema() where tables were being processed in a
+  sequential order instead of first processing DATA tables and then LINK tables
+  since LINK tables depend on DATA tables being identified.
+  
+- Fixed bug in Database::check_schema() where LINK table checking was hard coding
+  primary key names.
+  
+- Fixed Email.php where header had an incorrect 'From' address format.
+
+
+============================
+Mon Mar 20 14:34:56 CST 2006
+============================
+
+Enhancements
+------------
+- Added method Table::get_table_rows_with_actions(). Method returns data obtained from 
+  Table::get_table_rows() and appends an additional 'Actions' field to provide 'view', 
+  'update' and 'delete' links. 
+
+- Moved application name and session lifetime configuration elements from index.php
+  to config.ini. Changes to Application::Application() and 
+  Application::check_configuration_file() as needed. 
+
+- Added isset_and_non_empty() global function to check that variables loaded from the
+  configuration file are set and are not empty strings. Used in phpfw.php and Login.php.
+
+Bug Fixes
+---------
+- Fixed bug where if templating framework was left blank in config file then Phpfw 
+  complained that framework '' was invalid.
+  
+- Fixed bug where DATE_ADDED and DATE_UPDATED fields were not being ignored in the form
+  processing function.
+  
+- Fixed a bug in Login.php where 'check_login()' was not loading the login configuration.

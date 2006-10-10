@@ -1,0 +1,124 @@
+Classes
+- Database
+  ~ name
+  ~ sql
+  ~ tables -> array of Tables
+  
+  = get_schema() -> populate tables and columns
+  = check_schema() -> populate types, links
+  = get_table_by_name() -> returns reference to table by name
+  
+- Table
+  ~ name
+  ~ external_name
+  ~ columns -> array of Columns
+  ~ type (data or link)
+  ~ links -> array of references to Link_Table (for data)
+  ~ links -> array of references to Tables linked (if link)
+  
+  = get_linked_to() -> returns array(array(Link_table => Linked_to))
+  = get_table_rows() -> get all rows
+  = get_table_row() -> get specific row
+  = get_table_row_for_view() -> Return as View::$data
+  = get_table_row_links() -> get valid links to specific row
+  = get_table_row_link_rows_for_view() -> Return as View::$data
+  = get_table_row_link_rows() -> get rows from all valid links to specific row
+  = get_table_row_and_link_rows_for_view() -> Return as View::$data
+  
+  = delete_table_row() -> delete specific row
+  = delete_link_table_row() -> delete specific row from a link table
+  = delete_table_row_link_rows() -> delete rows from all valid links to specific row
+  = delete_table_row_and_link_rows() -> delete row and links
+  
+- Column
+  ~ name
+  ~ external_name
+  ~ type
+  ~ values (enum)
+  ~ size
+  ~ is_key
+  ~ is_required
+  ~ is_autoincrement
+  
+- Form
+  ~ data
+  ~ tables -> array of references to Tables
+  ~ table_ids -> array(table_name => id)
+  
+  = add_table() -> add a table reference to be considered in create_form
+  = create_form() -> create form from all tables added
+  = process_form()
+
+- Controller
+  ~ modules -> array of module objects - array(name => object)
+  ~ default -> array(module_name => action)
+  ~ exceptions -> array(module_name => action)
+  
+  = add_module() -> accept module name, instantiate object
+  = add_exception() -> add an exception which can be passed through to execute() without encoding
+  = set_default() -> accept module name, action name
+  
+  = encode_url() -> encode module + action pair
+  = decode_url() -> decode module + action pair
+  
+  = execute() -> search specified module for specified action, execute if available
+  
+- Sql (static)
+  ~ queries
+  ~ connection
+  
+  = load_queries_from_file() -> called by constructor
+  = connect()
+  = select_query()
+  = insert_query()
+  = update_query()
+  = delete_query()
+  = get_last_inserted_id()
+  
+- Error (singleton)
+  ~ error_strings
+  
+  = load_errors_from_file() -> called by constructor, populate error_strings
+  = check_errors()
+  = display_error()
+
+- View
+  ~ data
+  ~ properties
+  ~ reset_properties
+  ~ saved
+  
+  = get_data()
+  = set_data()
+  = set_properties()
+  = clear_properties()
+  = auto_reset_properties()
+  = merge_properties()
+  = push()
+  = pop()
+  = pop_append()
+  = get_unique_blank_key()
+  = render
+  = all functions in template.php
+
+- Application
+  ~ config -> config file input, constructor
+  ~ error -> create error object, constructor
+  ~ database -> create database object, constructor
+  ~ controller -> create controller object, constructor
+  
+  ~ scripts
+  ~ stylesheets
+
+Class usage hierarchy
+- Application
+  - Error
+  - Database
+    - Sql
+    - Table
+      - Column
+  - Controller
+    - User defined modules
+      - Form
+      - View
+
