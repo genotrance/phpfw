@@ -52,7 +52,13 @@ class Login extends Module {
 	 * Register exceptions in the constructor
 	 */
 	function Login() {
-		$this->exceptions = array('login_user_form');
+		$this->register_exception('login_user_form');
+		$this->register_error('ERROR_LOGIN_NEW_PASSWORD_MISMATCH', 
+			"New passwords do not match. Please try again.", "ERROR");
+		$this->register_error('ERROR_LOGIN_CURRENT_PASSWORD_INCORRECT', 
+			"Current password incorrect. Please try again.", "ERROR");
+		$this->register_error('ERROR_LOGIN_NEW_PASSWORD_TOO_SHORT', 
+			"Your new password is too short. At least 8 characters are required. Please try again.", "ERROR");
 	}
 	
 	/**
@@ -66,11 +72,11 @@ class Login extends Module {
 
 		// Load values from config file if applicable
 		if (isset($this->application->config['login'])) {
-			if (isset($this->application->config['login']['table']))
+			if (isset_and_non_empty($this->application->config['login']['table']))
 				$this->table = $this->application->config['login']['table'];
-			if (isset($this->application->config['login']['user_field']))
+			if (isset_and_non_empty($this->application->config['login']['user_field']))
 				$this->table = $this->application->config['login']['user_field'];
-			if (isset($this->application->config['login']['pass_field']))
+			if (isset_and_non_empty($this->application->config['login']['pass_field']))
 				$this->table = $this->application->config['login']['pass_field'];
 		}
 	}
@@ -84,9 +90,10 @@ class Login extends Module {
 		$this->get_configuration();
 		
 		// Check if login form was filled
-		if (isset($_POST[$this->user_field]) && isset($_POST[$this->pass_field])) {
+		if (isset_and_non_empty($_POST[$this->user_field]) && isset($_POST[$this->pass_field])) {
 			// Check if specified login exists
-			$rows =& $this->sql->select_query('SQL_SELECT', $this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."'");
+			$rows =& $this->sql->select_query('SQL_SELECT', 
+				$this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."'");
 			if (count($rows) != 1) {
 				sleep(5);    // Sleep to avoid abuse
 				$this->login_user_form(true);
@@ -218,9 +225,14 @@ class Login extends Module {
 	* @param bool $forward Forward the user to the login form if true (default: true)
 	*/
 	function check_login($forward=true) {
-		if (!isset($_SESSION) || !isset($_SESSION['session_authenticated']) || $_SESSION['session_authenticated'] != 1) {
+		// Load the configuration
+		$this->get_configuration();
+		
+		if (!isset($_SESSION) || 
+			!isset($_SESSION['session_authenticated']) || 
+			$_SESSION['session_authenticated'] != 1) {
 			if ($forward == true) {
-				$this->login_user_form();
+				$this->login_user();
 				$this->render();
 				exit;
 			}
@@ -228,6 +240,164 @@ class Login extends Module {
 		}
 	
 		return true;
+	}
+	
+	/*
+	 * This function updates the login of the currently logged in user
+	 * 
+	 * Function requires the user to be logged in in order to change their login. It changes the login of the
+	 * active user.
+	 *
+	 * @param string $new_login A string containing the updated login. String is escaped by the function using addslashes()
+	 */
+	function update_login($new_login) {
+		// Verify that we are logged in
+		$this->check_login();
+		
+		// Escape the provided string
+		$new_login = addslashes($new_login);
+		
+		// Update login only if it has changed
+		if ($new_login != $_SESSION['session_user']) {
+			// Update the database row
+			$this->database->sql->update_query(
+				'SQL_UPDATE', $this->table, 
+				$this->user_field."='".$new_login."'", 
+				$this->user_field."='".$_SESSION['session_user']."'", "nocheck");
+				
+			// Update the session variable
+			$_SESSION['session_user'] = $new_login;
+		}
+	}
+	
+	/*
+	 * This function creates a form to update the password of the currently logged in user
+	 *
+	 * Function requires the user to be logged in in order to change their login. It changes the login of the
+	 * active user. It should be directly invoked.
+	 */
+	function change_password() {
+		// Verify that we are logged in
+		$this->check_login();
+
+		if (isset_and_non_empty($_POST['current_password']) && 
+			isset_and_non_empty($_POST['new_password']) && 
+			isset_and_non_empty($_POST['new_password_repeat'])) {
+			$current_password = addslashes($_POST['current_password']);
+			$new_password = addslashes($_POST['new_password']);
+			$new_password_repeat = addslashes($_POST['new_password_repeat']);
+			
+			// Check if current password is correct
+			$rows =& $this->sql->select_query('SQL_SELECT', 
+				$this->table, "where ".$this->user_field."='".$_SESSION['session_user']."' and ".
+				$this->pass_field."=PASSWORD('".$current_password."')");
+			if (count($rows) != 1) {
+				sleep(5);    // Sleep to avoid abuse
+				unset($_POST['current_password']);
+				unset($_POST['new_password']);
+				unset($_POST['new_password_repeat']);
+				$this->change_password();
+				$this->error->display_error('ERROR_LOGIN_CURRENT_PASSWORD_INCORRECT');
+			}
+
+			// Check new passwords
+			if ($new_password != $new_password_repeat) {
+				unset($_POST['current_password']);
+				unset($_POST['new_password']);
+				unset($_POST['new_password_repeat']);
+				$this->change_password();
+				$this->error->display_error('ERROR_LOGIN_NEW_PASSWORD_MISMATCH');
+			}
+			
+			// Check password length
+			if (strlen($new_password) < 8) {
+				unset($_POST['current_password']);
+				unset($_POST['new_password']);
+				unset($_POST['new_password_repeat']);
+				$this->change_password();
+				$this->error->display_error('ERROR_LOGIN_NEW_PASSWORD_TOO_SHORT');
+			}
+			
+			// Update the password field
+			$this->sql->update_query('SQL_UPDATE', $this->table,
+				$this->pass_field."=PASSWORD('".$new_password."')",
+				$this->user_field."='".$_SESSION['session_user']."'", "nocheck");
+				
+			// Run the default action
+			$_SERVER['QUERY_STRING'] = '';
+			$this->controller->execute();
+		} else {
+			// Display the change password form
+			
+			// Create the labels
+			$view = new View("Current password");
+			$view->label("current_password");
+			$label_op = $view->get_data();
+			
+			$view->set_data("New password");
+			$view->label("new_password");
+			$label_np = $view->get_data();
+
+			$view->set_data("New password (repeat)");
+			$view->label("new_password_repeat");
+			$label_npr = $view->get_data();
+			
+			// Create the password fields
+			$view->reset_data();
+			$view->set_properties(array('required' => 'required'));
+			$view->input_password("current_password");
+			$op_data = $view->data;
+
+			$view->reset_data();
+			$view->set_properties(array('required' => 'required'));
+			$view->input_password("new_password");
+			$np_data = $view->data;
+
+			$view->reset_data();
+			$view->set_properties(array('required' => 'required'));
+			$view->input_password("new_password_repeat");
+			$npr_data = $view->data;
+
+			// Create submit button
+			$view->input_submit();
+			$view->sp();
+			$view->push();
+
+			// Create cancel button
+			$view->input_cancel('cancel');
+			$view->pop_prepend();
+			
+			$buttons = $view->get_data();
+
+			// Create the table
+			$view->set_data(array(
+					$label_op => $op_data,
+					$label_np => $np_data,
+					$label_npr => $npr_data,
+					' ' => $buttons
+				)
+			);
+			$view->table_two_column_associative();
+			
+			// Create the form
+			$view->set_properties(array(
+					'action' => $this->controller->encode_url('Login', 'change_password'),
+					'method' => "POST",
+					'onsubmit' => "javascript:return form.validate(this);"
+				)
+			);
+			$view->form('change_password');
+			$view->push();
+			
+			// Header
+			$view->set_data("Change password");
+			$view->h2();
+			$view->nl();
+			$view->pop_append();
+			
+			$view->center();
+			$this->output = $view->get_data();
+		}
 	}
 }
 
