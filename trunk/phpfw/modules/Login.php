@@ -86,8 +86,17 @@ class Login extends Module {
 	
 	/**
 	 * Login the user
+	 * 
+	 * Use the following parameters if login processing is invoked from another
+	 * module action.
+	 * 
+	 * @param string $module Name of the module to process the login form (default: Login)
+	 * @param string $action Name of the action to process the login form (default: login_user)
+	 * @param string $params Parameters required for this module:action combination in "param=value&param=value" format. (default: '')
+	 * 
+	 * @return mixed If a module:action is specified, this action returns true (for login success) or the login form HTML (for login failure)
 	 */
-	function login_user()
+	function login_user($module='Login', $action='login_user', $params='')
 	{
 		// Load the configuration
 		$this->get_configuration();
@@ -99,8 +108,7 @@ class Login extends Module {
 				$this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."'");
 			if (count($rows) != 1) {
 				sleep(5);    // Sleep to avoid abuse
-				$this->login_user_form(true);
-				return false;
+				return $this->login_user_form($module, $action, $params, true);
 			}
 		
 			// Check if login/password matches
@@ -109,8 +117,7 @@ class Login extends Module {
 				$this->pass_field."=PASSWORD('".$_POST[$this->pass_field]."')");
 			if (count($rows) != 1) {
 				sleep(5);    // Sleep to avoid abuse
-				$this->login_user_form(true);
-				return false;
+				return $this->login_user_form($module, $action, $params, true);
 			}
 			$row = $rows[0];
 		
@@ -119,44 +126,60 @@ class Login extends Module {
 			$_SESSION['session_user'] = $_POST[$this->user_field];
 			$_SESSION['session_authenticated'] = 1;
 
+			// Disable output
+			$this->disable_render();
+		
+			// Execute default action or return
+			if ($module == 'Login' && $action == 'login_user') {
 			// Run the default action
 			$_SERVER['QUERY_STRING'] = '';
 			$this->controller->execute();
 		} else {
-			$this->login_user_form();
-			return false;
+				return true;
+			}
+		} else {
+			return $this->login_user_form($module, $action, $params);
 		}
-	
-		return false;
 	}
  
 	/**
 	 * Log out the current user. This is done by deleting the session
+	 * 
+	 * The default or the specified module:action is executed after logging out.
+	 * 
+	 * @param string $module Name of the module to execute after logout
+	 * @param string $action Name of the action to execute after logout
+	 * @param string $params Parameters required for this module:action combination in "param=value&param=value" format. (default: '')
 	 */
-	function logout_user()
+	function logout_user($module='', $action='', $params='')
 	{
 		// Delete all the saved session data
 		$_SESSION = array();
 	
-		// Delete the session cookie
-		if (isset($_COOKIE[session_name()])) {
-			setcookie(session_name(), '', time()-42000, '/');
-		}
-	
-		// Destroy the session data in PHP
-		session_destroy();
+		// Disable output
+		$this->disable_render();
 
+		if ($module == '' && $action == '') {
 		// Run the default action
 		$_SERVER['QUERY_STRING'] = '';
+		} else {
+			// Run specified action
+			$_SERVER['QUERY_STRING'] = "module=$module&action=$action";
+			if ($params != '')
+				$_SERVER['QUERY_STRING'] .= $params;
+		}
 		$this->controller->execute();
 	}
 
 	/**
 	 * Display login form
 	 *
+	 * @param string $module Name of the module to process the login form
+	 * @param string $action Name of the action to process the login form
+	 * @param string $params Parameters required for this module:action combination in "param=value&param=value" format. (default: '')
 	 * @param bool $failed Set to true if previous login attempt failed.
 	 */
-	function login_user_form($failed=false) {
+	function login_user_form($module, $action, $params='', $failed=false) {
 		// Load the configuration
 		$this->get_configuration();
 		
@@ -174,7 +197,7 @@ class Login extends Module {
 		
 		// User text box
 		$view->reset_data();
-		$view->set_properties(array("size" => 33, "maxlength" => 60));
+		$view->set_properties(array("size" => 33, "maxlength" => 60, "required" => "required"));
 		$view->input_text($this->user_field);
 		$user_textbox = $view->get_data();
 		
@@ -185,6 +208,7 @@ class Login extends Module {
 		
 		// Pass text box
 		$view->reset_data();
+		$view->set_properties(array("required" => "required"));
 		$view->input_password($this->pass_field);
 		$pass_textbox = $view->get_data();
 		
@@ -204,7 +228,7 @@ class Login extends Module {
 			' ' => $buttons));
 		$view->table_two_column_associative();
 		$view->set_properties(array(
-			"action" => $this->controller->encode_url('Login', 'login_user'),
+			"action" => $this->controller->encode_url($module, $action, $params),
 			"method" => "POST",
 			"onsubmit" => "javascript: return form.validate(this);"));
 		$view->form("login");
@@ -221,6 +245,9 @@ class Login extends Module {
 			$view->center();
 			$this->output .= $view->get_data();
 		}
+		
+		// Return the output
+		return $this->output;
 	}
 
 	/**

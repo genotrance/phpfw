@@ -1,4 +1,29 @@
 ============================
+Fri Apr  6 15:35:50 UTC 2007
+============================
+
+Enhancements
+------------
+- Modules can now disable the automatic rendering of output in cases where
+  finer control of output is required. Module::disable_render() and 
+  Module::enable_render() control this setting.
+- Modules can also disable wrapping the output with the default Phpfw header.
+  This is useful if the module generates AJAX output that doesn't need the
+  usual enclosing header information. This can be achieved with 
+  Module::disable_view() and Module::enable_view().
+- Table::get_table_rows_with_actions() now returns buttons instead of links
+  for the view/edit/delete actions.
+- Application object now stores the configuration file location specified in
+  case it is needed later.
+- Login::login_user() and Login::logout_user() now allow specifying the 
+  module and action to execute after successfully returning.
+
+Bug Fixes
+---------
+- Script files were being loaded in the reverse order of that specified in
+  config.ini.
+
+============================
 Thu Jul 27 00:36:39 CDT 2006
 ============================
 
