@@ -11,7 +11,7 @@ error.ini
 - Replace old version
 
 config.ini
-- New sections [schema], [mailserver], [maildb]
+- New sections [schema], [mailserver]
 
 ==================
 Version 0.2 => 0.3

@@ -53,6 +53,11 @@ $__application = 0;
  */
 class Application {
 	/**
+	 * @var string Configuration file name
+	 */
+	var $config_file;
+
+	/**
 	 * @var array Configuration file array
 	 */
 	var $config;
@@ -99,6 +104,9 @@ class Application {
 		// Link object to global application reference
 		$GLOBALS['__application'] =& $this;
 		
+		// Save the configuration file name
+		$this->config_file = $config_file;
+
 		// Load the configuration file
 		if (!file_exists($config_file)) 
 			$this->display_error("Can not find config file '$config_file'.");
@@ -1715,7 +1723,7 @@ class View {
 		if ($count != 0) {
 			// Append all script and stylesheet code
 			while ($count != 0) {
-				$this->pop_append();
+				$this->pop_prepend();
 				$count--;
 			}
 			
@@ -2957,17 +2965,6 @@ class Table {
 				$list['del'] = $del_action;
 
 				foreach ($list as $key => $value) {
-					switch ($key) {
-						case 'view':
-						case 'update':
-							$properties = 0;
-							$delimit = 'sp';
-							break;
-						case 'del':
-							$properties = array("onclick" => "javascript:return confirm('Are you sure you want to delete this entry?');");
-							$delimit = 0;
-							break;
-					}
 					if ($value) {
 						$module = strtok($value, ':');
 						$action = strtok(':');
@@ -2996,7 +2993,21 @@ class Table {
 							$link = $GLOBALS['__application']->controller->encode_ajax_url($module, $action, $use_element, $params);
 						else
 							$link = $GLOBALS['__application']->controller->encode_url($module, $action, $params);
-						$view->add_element("a", $key, $properties, $delimit, $link);
+							
+						switch ($key) {
+							case 'view':
+							case 'update':
+								if (substr($link, 0, 10) != "javascript") $link = "javascript:document.location = '$link';";
+								$properties = array("value" => $key, "onclick" => $link);
+								$delimit = 'sp';
+								break;
+							case 'del':
+								$properties = array("value" => $key, "onclick" => "javascript:if (confirm('Are you sure you want to delete this entry?'))".substr($link, 11).";");
+								$delimit = 0;
+								break;
+						}
+							
+						$view->add_element("input_button", $key, $properties, $delimit);
 					}
 				}
 				$view->compile_template();
@@ -3943,6 +3954,27 @@ class Module {
 	 */
 	var $use_template_library;
 
+	/*
+	 * @var bool Specify if this module should use View object in Module::render().
+	 *
+	 * - If set to FALSE, the Module::render() method directly outputs the data instead of
+	 * using the View::render() method which generates the complete HTML header, etc. This
+	 * is useful if the module action is an AJAX method and only needs to generate the inner
+	 * HTML and not a complete HTML document.
+	 *
+	 * Module::$use_view is default initialized to TRUE.
+	 */
+	var $use_view;
+
+	/*
+	 * @var bool Specify if this module should use the Module::render().
+	 *
+	 * - If set to FALSE, the Module::render() method does nothing.
+	 *
+	 * Module::$use_render is default initialized to TRUE.
+	 */
+	var $use_render;
+
 	/**
 	 * @var string The name of the template file if using a template library
 	 *
@@ -4137,6 +4169,46 @@ class Module {
 	}
 
 	/**
+	 * Disable the View object usage in Module::render().
+	 *
+	 * This method is useful if you are using AJAX functionality and do not require the
+	 * Module to generate a complete HTML output.
+	 */
+	function disable_view() {
+		$this->use_view = false;
+	}
+
+	/**
+	 * Enable the View object usage in Module::render().
+	 *
+	 * This method restores the Phpfw default of rendering the final output in Module::render()
+	 * using the View object.
+	 */
+	function enable_view() {
+		$this->use_view = true;
+	}
+
+	/**
+	 * Prevent the Module::render() function from running.
+	 *
+	 * This method is useful if you'd like to control all the output directly from your module
+	 * action instead of having Phpfw do it.
+	 */
+	function disable_render() {
+		$this->use_render = false;
+	}
+
+	/**
+	 * Enable the Module::render() function.
+	 *
+	 * This method restores the Phpfw default of rendering the output in the Module::render()
+	 * function.
+	 */
+	function enable_render() {
+		$this->use_render = true;
+	}
+
+	/**
 	 * Set a custom template file if using a templating library
 	 *
 	 * The template file is auto-detected as Module#action. Using this function, it can be changed to a
@@ -4199,6 +4271,10 @@ class Module {
 			$this->queries = array();
 		if (!isset($this->use_template_library))
 			$this->use_template_library = true;
+		if (!isset($this->use_view))
+			$this->use_view = true;
+		if (!isset($this->use_render))
+			$this->use_render = true;
 		if (!isset($this->template_file))
 			$this->template_file = '';
 	}
@@ -4274,35 +4350,41 @@ class Module {
 	 * The controller automatically calls this function. Do not call this function directly.
 	 */
 	function render() {
-		if ($this->use_template_library == true && 
-			isset_and_non_empty($this->application->config['template']['framework'])) {
-			$framework = $this->application->config['template']['framework'];
-
-			// Check which framework
-			switch ($framework) {
-				case "Smarty":
-				case "PHPTAL":
-					break;
-				default:
-					$this->error->display_error('ERROR_MODULE_UNSUPPORTED_TEMPLATE_FRAMEWORK', $framework);
-
+		if ($this->use_render == true) {
+			if ($this->use_template_library == true && 
+				isset_and_non_empty($this->application->config['template']['framework'])) {
+				$framework = $this->application->config['template']['framework'];
+	
+				// Check which framework
+				switch ($framework) {
+					case "Smarty":
+					case "PHPTAL":
+						break;
+					default:
+						$this->error->display_error('ERROR_MODULE_UNSUPPORTED_TEMPLATE_FRAMEWORK', $framework);
+	
+				}
+	
+				// Get the module and action being executed
+				parse_str($this->controller->decode_url());
+				if ($this->template_file == '') 
+					$template_file = "$module#$action";
+				else
+					$template_file = $this->template_file;
+	
+				// Call the templating framework's render method
+				$render_method = "${framework}_render";
+				$this->output = $this->$render_method($template_file);
 			}
-
-			// Get the module and action being executed
-			parse_str($this->controller->decode_url());
-			if ($this->template_file == '') 
-				$template_file = "$module#$action";
-			else
-				$template_file = $this->template_file;
-
-			// Call the templating framework's render method
-			$render_method = "${framework}_render";
-			$this->output = $this->$render_method($template_file);
-		}
 		
-		// Generate the output using a View object
-		$view = new View($this->output);
-		$view->render();
+			// Render the output using the View object if requested
+			if ($this->use_view) {
+				// Generate the output using a View object
+				$view = new View($this->output);
+				$view->render();
+			} else
+				echo $this->output;
+		}
 	}
 
 	/**
