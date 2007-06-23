@@ -1,3 +1,26 @@
+**********************
+ Released version 0.4
+**********************
+
+============================
+Sat Jun 23 15:26:01 CDT 2007
+============================
+
+Enhancements
+------------
+- Phpfw no longer forces the user to use a backend database. This can be
+  done by turning off the [database] section in the configuration file.
+- Modules can now identify whether the remote browser is on a mobile device
+  with a smaller screen. The controller has a variable which can be accessed
+  as follows: $this->controller->is_mobile_browser. This allows modules to
+  generate a different output for devices with smaller screens.
+- Login module now supports authentication against an ini file in addition
+  to a database. This is achieved by modifying the [login] section.
+- Added the Config module which provides a simple interface to read and write
+  configuration files. Currently, it supports .ini files.
+- Added the PelWrap module which provides a simple wrapper interface to the
+  Pel library (http://pel.sf.net/).
+  
 ============================
 Fri Apr  6 15:35:50 UTC 2007
 ============================
