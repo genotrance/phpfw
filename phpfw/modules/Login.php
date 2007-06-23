@@ -14,25 +14,37 @@
  * The Login module requires the following entries in the configuration file.
  *
  * [login]
- * table = login_table_name	: Name of the table in the database that contains login information
+ * mode = database or file : Authenticate against a 'database' or 'file'
  * key_field = key_field_name : Name of the field that contains the primary key 
  * user_field = user_field_name	: Name of the field that contains the user name
  * pass_field = password_field_name : Name of the field that contains the password (encrypted using PASSWORD())
  *
+ * table = login_table_name	: Name of the table in the database that contains login information
+ * 
+ * file = path/to/file : Location of the password file
+ * type = ini : Type of password file
+ *
  * The defaults are as below:
  * [login]
- * table = user
+ * mode = database
  * key_field = user_id
  * user_field = email
  * pass_field = password
+ * 
+ * table = user
+ * 
+ * file = "ini/password.ini"
+ * type = ini
+ * 
+ * This module requires the Config module when file based authentication is used.
  */
 class Login extends Module {
 	/**
-	 * @var string $table Name of the table in the database that contains login information
+	 * @var string $mode Authentication mode: 'database' or 'file'
 	 *
-	 * Default: 'user'
+	 * Default: 'database'
 	 */
-	var $table = 'user';
+	var $mode = 'database';
 
 	/**
 	 * @var string $table Name of the field that contains the primary key
@@ -56,6 +68,27 @@ class Login extends Module {
 	var $pass_field = 'password';
 	
 	/**
+	 * @var string $table Name of the table in the database that contains login information
+	 *
+	 * Default: 'user'
+	 */
+	var $table = 'user';
+
+	/**
+	 * @var string $file Location of the password file.
+	 *
+	 * Default: 'ini/password.ini'
+	 */
+	var $file = 'ini/password.ini';
+
+	/**
+	 * @var string $type Type of password file: 'ini'
+	 *
+	 * Default: 'ini'
+	 */
+	var $type = 'ini';
+
+	/**
 	 * Constructor for Login module
 	 *
 	 * Register exceptions in the constructor
@@ -68,6 +101,10 @@ class Login extends Module {
 			"Current password incorrect. Please try again.", "ERROR");
 		$this->register_error('ERROR_LOGIN_NEW_PASSWORD_TOO_SHORT', 
 			"Your new password is too short. At least 8 characters are required. Please try again.", "ERROR");
+		$this->register_error('ERROR_LOGIN_PASSWORD_FILE_DOES_NOT_EXIST',
+			"Password file does not exist: '%s'.", "ERROR");
+		$this->register_error('ERROR_LOGIN_PASSWORD_FILE_EMPTY',
+			"Password file is empty: '%s'.", "ERROR");
 		$this->disable_template_library();
 	}
 	
@@ -77,11 +114,15 @@ class Login extends Module {
 	function get_configuration() {
 		// Load values from config file if applicable
 		if (isset($this->application->config['login'])) {
-			$keys = explode(' ', 'table key_field user_field pass_field');
+			$keys = explode(' ', 'mode key_field user_field pass_field table file type');
 			foreach ($keys as $key)
 				if (isset_and_non_empty($this->application->config['login'][$key]))
 					$this->$key = $this->application->config['login'][$key];
 		}
+		
+		// Check if password file exists if mode = 'file'
+		if (($this->mode == 'file') && (!file_exists($this->file)))
+			$this->error->display_error('ERROR_LOGIN_PASSWORD_FILE_DOES_NOT_EXIST', $this->file);
 	}
 	
 	/**
@@ -103,39 +144,53 @@ class Login extends Module {
 		
 		// Check if login form was filled
 		if (isset_and_non_empty($_POST[$this->user_field]) && isset($_POST[$this->pass_field])) {
-			// Check if specified login exists
-			$rows =& $this->sql->select_query('SQL_SELECT', 
-				$this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."'");
-			if (count($rows) != 1) {
-				sleep(5);    // Sleep to avoid abuse
-				return $this->login_user_form($module, $action, $params, true);
+			if ($this->mode == 'database') {
+				// Check if login/password matches
+				$rows =& $this->sql->select_query('SQL_SELECT', 
+					$this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."' and ".
+					$this->pass_field."=PASSWORD('".$_POST[$this->pass_field]."')");
+				if (count($rows) != 1) {
+					sleep(5);    // Sleep to avoid abuse
+					return $this->login_user_form($module, $action, $params, true);
+				}
+				$row = $rows[0];
+			
+				// Save some of the values in the PHP session
+				$_SESSION['session_user_id'] = $row[$this->key_field];
+				$_SESSION['session_user'] = $_POST[$this->user_field];
+				$_SESSION['session_authenticated'] = 1;
+			} else if ($this->mode == 'file') {
+				// Load passwords from file
+				$passwords = $this->exec_module_action('Config', 'read_ini_file', $this->file);
+				if (!count($passwords))
+					$this->error->display_error('ERROR_LOGIN_PASSWORD_FILE_EMPTY', $this->file);
+					
+				// Check if login/password matches
+				foreach ($passwords as $password) {
+					if (($password[$this->user_field] == $_POST[$this->user_field]) &&
+						($password[$this->pass_field] == md5($_POST[$this->pass_field]))) {
+						$_SESSION['session_user_id'] = $password[$this->key_field];
+						$_SESSION['session_user'] = $_POST[$this->user_field];
+						$_SESSION['session_authenticated'] = 1;
+						break;
+					}
+				}
+				if ($this->check_login(false) == false) {
+					sleep(5); // Sleep to avoid abuse
+					return $this->login_user_form($module, $action, $params, true);
+				}
 			}
-		
-			// Check if login/password matches
-			$rows =& $this->sql->select_query('SQL_SELECT', 
-				$this->table, "where ".$this->user_field."='".$_POST[$this->user_field]."' and ".
-				$this->pass_field."=PASSWORD('".$_POST[$this->pass_field]."')");
-			if (count($rows) != 1) {
-				sleep(5);    // Sleep to avoid abuse
-				return $this->login_user_form($module, $action, $params, true);
-			}
-			$row = $rows[0];
-		
-			// Save some of the values in the PHP session
-			$_SESSION['session_user_id'] = $row[$this->key_field];
-			$_SESSION['session_user'] = $_POST[$this->user_field];
-			$_SESSION['session_authenticated'] = 1;
 
 			// Disable output
 			$this->disable_render();
 		
 			// Execute default action or return
 			if ($module == 'Login' && $action == 'login_user') {
-			// Run the default action
-			$_SERVER['QUERY_STRING'] = '';
-			$this->controller->execute();
-		} else {
-				return true;
+				// Run the default action
+				$_SERVER['QUERY_STRING'] = '';
+				$this->controller->execute();
+			} else {
+					return true;
 			}
 		} else {
 			return $this->login_user_form($module, $action, $params);
@@ -160,8 +215,8 @@ class Login extends Module {
 		$this->disable_render();
 
 		if ($module == '' && $action == '') {
-		// Run the default action
-		$_SERVER['QUERY_STRING'] = '';
+			// Run the default action
+			$_SERVER['QUERY_STRING'] = '';
 		} else {
 			// Run specified action
 			$_SERVER['QUERY_STRING'] = "module=$module&action=$action";
@@ -290,11 +345,29 @@ class Login extends Module {
 		
 		// Update login only if it has changed
 		if ($new_login != $_SESSION['session_user']) {
-			// Update the database row
-			$this->database->sql->update_query(
-				'SQL_UPDATE', $this->table, 
-				$this->user_field."='".$new_login."'", 
-				$this->user_field."='".$_SESSION['session_user']."'", "nocheck");
+			if ($this->mode == 'database') {
+				// Update the database row
+				$this->database->sql->update_query(
+					'SQL_UPDATE', $this->table, 
+					$this->user_field."='".$new_login."'", 
+					$this->user_field."='".$_SESSION['session_user']."'", "nocheck");
+			} else if ($this->mode == 'file') {
+				// Get passwords from file
+				$passwords = $this->exec_module_action('Config', 'read_ini_file', $this->file);
+				if (!count($passwords))
+					$this->error->display_error('ERROR_LOGIN_PASSWORD_FILE_EMPTY', $this->file);
+				
+				// Update login
+				foreach ($passwords as $user => $password) {
+					if ($passwords[$user][$this->user_field] == $_SESSION['session_user']) {
+						$passwords[$user][$this->user_field] = $new_login;
+						break;
+					}
+				}
+				
+				// Write to file
+				$this->exec_module_action('Config', 'write_ini_file', $this->file, $passwords);
+			}
 				
 			// Update the session variable
 			$_SESSION['session_user'] = $new_login;
