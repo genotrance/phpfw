@@ -1,0 +1,51 @@
+==================
+Version 0.3 => 0.4
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+error.ini
+- Replace old version
+
+config.ini
+- New sections [schema], [mailserver], [pel]
+- Updated [login] section
+
+==================
+Version 0.2 => 0.3
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+error.ini
+- Replace old version
+
+config.ini
+- New key under [login] section
+
+==================
+Version 0.1 => 0.2
+==================
+phpfw.php
+- Replace old version
+
+Login.php
+- Replace old version
+
+Email.php
+- Replace old version
+
+index.php
+- Update 'Application()' constructor call, fewer parameters expected
+
+config.ini
+- Incorporate new [application] section
+
+form.js
+- Replace old version
