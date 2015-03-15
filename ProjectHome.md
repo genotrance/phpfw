@@ -1,0 +1,1 @@
+Phpfw is a framework for PHP that provides a base on which various database backed applications can be built. It allows for easy creation of CRUD applications (applications where most of the code is focused on create/read/update/delete operations on the database). It uses MVC-ish patterns to allow for simpler and cleaner organization of code.
